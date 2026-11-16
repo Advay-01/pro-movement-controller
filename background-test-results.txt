@@ -1,0 +1,4 @@
+PASS: background alternation and emergency key-up reach only the selected local receiver; focus unchanged
+PASS: foreground safety is preserved; mismatched target identity stops background output
+PASS: closed target rejects background input
+These tests do not establish PRO compatibility. No game received input.

@@ -1,0 +1,44 @@
+PASS: alternating keys with release and gap
+PASS: run limit releases held key
+PASS: focus loss stops and releases
+PASS: emergency latch, explicit reset, ordinary stop
+PASS: failed key-down triggers release and latches stop
+PASS: failed key-up retains pending key for retry
+PASS: invalid duration and non-movement key rejection
+PASS: delayed tick stops without replaying inputs
+PASS: unlimited mode survives elapsed day and stops manually
+PASS: encounter checking starts without a key and pause releases movement
+PASS: focus-loss safety remains active in unlimited mode
+PASS: exact species parsing, target preservation, near-target guard, ambiguous name rejection, and screen classification
+PASS: cropped split headers parse; unclear battle pauses; full-screen chat cannot authorize fleeing
+PASS: observed Seedot Run/Items OCR is accepted only in button crop; target encounters remain protected
+PASS: transient unreadable encounters can recover; persistent unreadability reaches a bounded deadline
+PASS: live Sneasel heading excludes nearby player lines, including split VS/Wild text
+PASS: cropped VS/Wild identity survives intervening level text; missing VS cannot confirm species
+PASS: focus requests honor initial delay, spacing, three-attempt cap, and terminal timeout
+PASS: resume requires stable confirmed focus; request success alone never resumes
+PASS: mouse/modifier activity prevents focus requests and cannot extend the recovery deadline
+PASS: closed, replaced, or minimized targets end focus recovery without further requests
+PASS: repeated focus loss and busy input reset the stable-focus observation
+PASS: stop/emergency cancellation prevents late focus changes; explicit restart resets the policy
+PASS: delayed ticks do not burst requests; invalid clocks and focus-request errors stop recovery
+PASS: auto-return releases before requesting focus, waits for stable focus and a gap, and preserves the original time limit
+PASS: emergency stop cancels focus recovery and prevents later activation attempts
+PASS: denied focus stops after bounded retries without sending another key-down
+PASS: unavailable targets stop without restoration or retry
+PASS: modifier safety and encounter pause remain active with auto-return enabled
+PASS: run-away uses right Shift, releases once, and retries cleanup after failed input
+PASS: brief OCR misses preserve world movement; battle, expired evidence and focus reset pause immediately
+PASS: two recent world readings resume in 250ms; stale readings cannot combine
+PASS: first escape has no fixed delay after two species readings; release checks and retry backoff remain active
+PASS: real controller preserves held movement through OCR misses, releases on battle, resumes promptly after escape, and emergency-stops
+PASS: Run click requires one right-side Run label and an aligned Items anchor; isolated, misaligned and ambiguous text is rejected
+PASS: visible Run clicks reject exact/near targets, changed opponents, unknown names, ambiguous reads and non-battle screens
+PASS: visual watcher distinguishes battle chrome, world/HUD decoration, dark world and blank/login backgrounds
+PASS: walking and startup use visual HUD confirmation without OCR; battle arms recognition; exit resumes after 160ms; focus resets trust
+PASS: no opponent OCR runs while walking, during uncertain transitions, or while an accepted escape is settling
+PASS: Run follows ready controls immediately; dialogue/busy states block input; ignored clicks retry without the old four-second wait
+PASS: accepted failures and ignored-request time are bounded; reset and unknown controls block action
+PASS: visual Run control separates enabled gray/blue hover, busy red and absent buttons
+PASS: verified header reuse requires exact pixel identity; a changed heading forces new OCR
+PASS: owned Right Shift avoids self-stop; manual Right Shift, Left Shift and other modifiers retain safety checks

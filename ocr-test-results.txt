@@ -1,0 +1,5 @@
+PASS: local Windows OCR reads synthetic wild header and battle commands.
+AdvayO VS. Wild Seedot
+Fight
+Items
+Local Trade

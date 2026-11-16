@@ -1,0 +1,15 @@
+# Local builds and runtime state
+*.exe
+*.dll
+*.pdb
+*.zip
+*.log
+activity.log
+
+# Local capture and editor files
+*.png
+*.jpg
+*.jpeg
+.vs/
+.vscode/
+.idea/

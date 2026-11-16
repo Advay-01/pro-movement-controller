@@ -1,0 +1,9 @@
+PASS: 44 local controller/recognition/target/readiness/cleanup check groups.
+PASS: Windows OCR synthetic battle fixtures.
+PASS: local receiver background tests; these establish no PRO background compatibility.
+LIVE: 12 completed escape/visual-return cycles; species: arbok, kecleon, seedot, slowbro, slowking.
+LIVE: 82–102 ms from observed ready controls to completed click, including 60 ms hold.
+LIVE: 11 exact verified caption reuses; zero world OCR calls.
+LIVE: visual world resume 101–199 ms.
+LIVE: F8 stopped the run. Last Arbok battle left untouched.
+Target protection passed local checks; no Mimikyu encountered during this final session.

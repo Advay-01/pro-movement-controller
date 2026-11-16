@@ -1,0 +1,52 @@
+{
+  "version": "1.8",
+  "session_start": "2026-11-16T15:13:23.0644503+05:30",
+  "session_end": "2026-11-16T15:15:56.8366729+05:30",
+  "completed_visual_returns": 12,
+  "escape_actions": 12,
+  "species_tested": [
+    "arbok",
+    "kecleon",
+    "seedot",
+    "slowbro",
+    "slowking"
+  ],
+  "ready_to_completed_click_ms": [
+    101,
+    94,
+    100,
+    91,
+    97,
+    82,
+    88,
+    101,
+    91,
+    102,
+    97,
+    97
+  ],
+  "ready_to_completed_click_min_ms": 82.0,
+  "ready_to_completed_click_max_ms": 102.0,
+  "ready_to_completed_click_mean_ms": 95.1,
+  "timing_basis": "First observed ready controls to completed visible click; includes 60 ms mouse hold; excludes game dialogue and escape animation.",
+  "exact_verified_heading_reuses": 11,
+  "world_resume_min_ms": 101.0,
+  "world_resume_max_ms": 199.0,
+  "world_ocr_calls": 0,
+  "visual_counters": {
+    "visual_probes": 1603,
+    "probe_mean_ms": 27.621,
+    "startup_or_refocus_world_ocr_calls": 0,
+    "battle_ocr_calls": 26,
+    "battle_appearances": 13,
+    "visual_resumes": 12
+  },
+  "failed_or_exhausted_escape_stops": 0,
+  "local_check_groups_passed": 44,
+  "local_ocr_fixtures": "passed",
+  "protected_species": "Mimikyu",
+  "target_in_final_live_session": false,
+  "target_preservation_verification": "Exact/near-target parser and action-gate tests passed; no live target encountered in this final session.",
+  "final_status": "Stopped by F8; final Arbok encounter left untouched.",
+  "executable_sha256": "E51F90A9E13C62EDCB6BB00E8E5C558E39A9A7C07C35D8D076F8CC4BDAB0F755"
+}
