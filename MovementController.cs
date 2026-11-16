@@ -250,6 +250,10 @@ namespace MovementPrototype {
         readonly ComboBox first = new ComboBox(), second = new ComboBox();
         readonly NumericUpDown hold = Number(0.8m,0.05m,5), gap = Number(0.15m,0.05m,5), limit = Number(30,1,120);
         readonly CheckBox untilStop = new CheckBox { Text="Until I stop it (no time limit)", Checked=true, AutoSize=true };
+        readonly CheckBox continueRepel = new CheckBox { Text="Continue Repel — use another when the expired prompt appears", AutoSize=true };
+        readonly RepelPromptVisual repelVisual=new RepelPromptVisual();
+        readonly RepelRenewalPolicy repelPolicy=new RepelRenewalPolicy();
+        int repelReads,repelClicks;
         readonly CheckBox encounters = new CheckBox { Text="Keep targets; run from other wild Pokémon (local OCR)", AutoSize=true };
         readonly CheckBox clickFallback = new CheckBox {Text="Use the recognised Run button immediately (Right Shift otherwise)",Checked=true,AutoSize=true};
         readonly TextBox targetNames = new TextBox { Width=360 };
@@ -302,7 +306,8 @@ namespace MovementPrototype {
         void SaveVisualStats() {
             if(visualProbes==0)return;
             try {
-                File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"visual-stats.json"),String.Format(System.Globalization.CultureInfo.InvariantCulture,"{{\"visual_probes\":{0},\"probe_mean_ms\":{1:0.000},\"startup_or_refocus_world_ocr_calls\":{2},\"battle_ocr_calls\":{3},\"battle_appearances\":{4},\"visual_resumes\":{5}}}",visualProbes,visualMs/visualProbes,worldOcrCalls,battleOcrCalls,visualBattles,visualResumes));
+                string stats=String.Format(System.Globalization.CultureInfo.InvariantCulture,"{{\"visual_probes\":{0},\"probe_mean_ms\":{1:0.000},\"startup_or_refocus_world_ocr_calls\":{2},\"battle_ocr_calls\":{3},\"battle_appearances\":{4},\"visual_resumes\":{5}",visualProbes,visualMs/visualProbes,worldOcrCalls,battleOcrCalls,visualBattles,visualResumes);
+                File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"visual-stats.json"),stats+",\"repel_prompt_ocr_calls\":"+repelReads+",\"repel_requests\":"+repelClicks+"}");
             } catch(IOException) {} catch(UnauthorizedAccessException) {}
         }
         readonly string activityPath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"activity.log");
@@ -340,7 +345,7 @@ namespace MovementPrototype {
         public App() {
             controller = new Controller(output);
             output.RunKey=runKey;
-            Text="Movement Controller v1.8 — testing prototype";
+            Text="Movement Controller v1.9 — testing prototype";
             ClientSize=new Size(630,900); MinimumSize=new Size(650,780);
             Font=new Font("Segoe UI",10); StartPosition=FormStartPosition.CenterScreen;
             var flow=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false, Padding=new Padding(22), AutoScroll=true };
@@ -360,6 +365,7 @@ namespace MovementPrototype {
             flow.Controls.Add(Row("Hold (sec)",hold,"Gap (sec)",gap));
             flow.Controls.Add(Row("Run limit (sec)",limit));
             flow.Controls.Add(untilStop);
+            flow.Controls.Add(continueRepel);
             flow.Controls.Add(encounters);
             flow.Controls.Add(new Label {Text="Run Away key: Right Shift (pressed briefly, then released)",AutoSize=true});
             flow.Controls.Add(clickFallback);
@@ -398,6 +404,7 @@ namespace MovementPrototype {
             external.CheckedChanged += delegate { if (!controller.Running) output.External=external.Checked; };
             controller.FocusRecoveryStarted += delegate {
                 generation++; ReleaseEscape(); stableCount=0; stableName="";
+                repelPolicy.Reset();
                 readGrace.Reset();
                 controller.Pause(true,clock.Elapsed.TotalSeconds);
                 scene.Reset();visualDecision=VisualDecision.ValidateWorld;lastChrome=ChromeKind.Transition;nextProbe=0;
@@ -406,7 +413,7 @@ namespace MovementPrototype {
             };
             background.CheckedChanged += delegate {
                 if(!controller.Running && !controller.Held.HasValue && !escapeHeld) output.Background=background.Checked;
-                if(background.Checked) encounters.Checked=false;
+                if(background.Checked) {encounters.Checked=false;continueRepel.Checked=false;}
                 encounterStatus.Text=background.Checked ? "Background movement only — encounter recognition and target alerts off." : "Encounter handling off — PRO must stay visible and focused.";
                 RefreshState();
             };
@@ -418,7 +425,7 @@ namespace MovementPrototype {
             RefreshWindows(); RefreshState();
             Activity("Controller opened; no automatic start.");
         }
-        public void PreparePro(string protectedTarget) {
+        public void PreparePro(string protectedTarget,bool renewRepel=false) {
             EncounterRecognition.Targets(protectedTarget);
             WindowChoice match=null; int count=0;
             foreach(WindowChoice choice in targets.Items) {
@@ -427,6 +434,8 @@ namespace MovementPrototype {
             if(count!=1) throw new InvalidOperationException("Open exactly one PROClient window before preparing automatic mode.");
             targets.SelectedItem=match; targetNames.Text=protectedTarget;
             untilStop.Checked=true; external.Checked=true; encounters.Checked=true; autoFocus.Checked=true;
+            continueRepel.Checked=renewRepel;
+            controller.Stop("Ready — external input armed; press F8 in PRO");
             encounterStatus.Text="Ready — visual watcher starts with F8; encounter OCR stays idle until a battle.";
             RefreshState();
             Activity("Automatic mode prepared; protected target: "+protectedTarget+". Waiting for F8 in PRO.");
@@ -490,7 +499,8 @@ namespace MovementPrototype {
                 RegisterShortcuts();
                 if(!hotkeys) throw new InvalidOperationException("F8 / F10 are being used by another app or an older controller. Close that copy. This window retries automatically; you do not need to reopen it.");
                 ReadSettings().Validate();
-                if(background.Checked && encounters.Checked) throw new InvalidOperationException("Background movement cannot be combined with encounter handling. Keep PRO focused for recognition and target alerts.");
+                if(background.Checked && (encounters.Checked || continueRepel.Checked)) throw new InvalidOperationException("Encounter and Repel handling require visible foreground input.");
+                if(continueRepel.Checked && !output.External)throw new InvalidOperationException("Continue Repel needs keyboard input enabled for a selected, visible PRO window. Use one Repel manually and enable PRO's Repel prompt first.");
                 if(encounters.Checked) {
                     if(!output.External) throw new InvalidOperationException("Encounter handling needs a selected game window and keyboard input enabled. Leave it off for local practice.");
                     desiredNames=EncounterRecognition.Targets(targetNames.Text);
@@ -502,6 +512,7 @@ namespace MovementPrototype {
         }
         void StartRun() {
             generation++; stableName=""; stableCount=0; escapeAttempts=0;
+            repelPolicy.Reset();repelReads=repelClicks=0;
             readGrace.Reset();
             scene.Reset();visualDecision=VisualDecision.ValidateWorld;lastChrome=ChromeKind.Transition;nextProbe=0;
             ResetControls();
@@ -509,11 +520,11 @@ namespace MovementPrototype {
             nextScan=0; waitSince=clock.Elapsed.TotalSeconds;
             var settings=ReadSettings();
             if(settings.AutoFocus && !output.Ready() && !output.Busy()) output.RequestFocus();
-            controller.Start(settings,clock.Elapsed.TotalSeconds,encounters.Checked);
+            controller.Start(settings,clock.Elapsed.TotalSeconds,encounters.Checked || continueRepel.Checked);
         }
         void ReleaseEscape() { runKey.Release(); }
-        void StopAll(string reason) { lastError=null; pendingStart=false; previewPending=false; generation++; try { controller.Stop(reason); } finally { ReleaseEscape(); SaveVisualStats(); } }
-        void EmergencyAll() { lastError=null; pendingStart=false; previewPending=false; generation++; try { controller.Emergency(); } finally { ReleaseEscape(); SaveVisualStats(); } }
+        void StopAll(string reason) { lastError=null; pendingStart=false; previewPending=false; generation++;repelPolicy.Reset(); try { controller.Stop(reason); } finally { ReleaseEscape(); SaveVisualStats(); } }
+        void EmergencyAll() { lastError=null; pendingStart=false; previewPending=false; generation++;repelPolicy.Reset(); try { controller.Emergency(); } finally { ReleaseEscape(); SaveVisualStats(); } }
         Settings ReadSettings() { return new Settings { First=(Keys)first.SelectedItem, Second=(Keys)second.SelectedItem, Hold=(double)hold.Value, Gap=(double)gap.Value, Limit=(double)limit.Value, UntilStopped=untilStop.Checked, AutoFocus=autoFocus.Checked && output.External && !output.Background }; }
         void Guard(Action action) {
             try { action(); }
@@ -538,10 +549,10 @@ namespace MovementPrototype {
             }
             if(escapeHeld && (!controller.Running || clock.Elapsed.TotalSeconds>=runKey.ReleaseAt)) Guard(delegate { ReleaseEscape(); });
             Guard(delegate { controller.Tick(clock.Elapsed.TotalSeconds); });
-            if(controller.Running && !controller.RecoveringFocus && output.Ready() && encounters.Checked) {
+            if(controller.Running && !controller.RecoveringFocus && output.Ready() && (encounters.Checked || continueRepel.Checked)) {
                 double now=clock.Elapsed.TotalSeconds;
                 if(now>=nextProbe) { nextProbe=now+.08; Guard(ProbeScene); }
-                bool needName=visualDecision==VisualDecision.ReadBattle && (stableCount<2 || !trackedRun.HasValue || readyEscape.Due(now) || readyEscape.StopRequired(now));
+                bool needName=encounters.Checked && !repelPolicy.Active && visualDecision==VisualDecision.ReadBattle && (stableCount<2 || !trackedRun.HasValue || readyEscape.Due(now) || readyEscape.StopRequired(now));
                 if(controller.Running && !scanning && now>=nextScan && needName) ScanEncounter();
                 if(now>=nextVisualStats) {nextVisualStats=now+5;SaveVisualStats();}
             }
@@ -555,12 +566,63 @@ namespace MovementPrototype {
             }
             practice.Invalidate();
         }
+        bool WatchRepel(Bitmap image,ChromeReading chrome) {
+            if(!continueRepel.Checked)return false;
+            bool wasActive=repelPolicy.Active;int requests=repelPolicy.Requests;
+            var bounds=repelVisual.Find(image);
+            repelPolicy.Observe(bounds,clock.Elapsed.TotalSeconds);
+            if(!repelPolicy.Active) {
+                if(wasActive && requests>0)Activity("REPEL: renewal dialog closed; visual world check resumes");
+                return false;
+            }
+            controller.Pause(true,clock.Elapsed.TotalSeconds);ReleaseEscape();
+            visualDecision=scene.Observe(ChromeKind.Transition,clock.Elapsed.TotalSeconds);lastChrome=ChromeKind.Transition;
+            ResetControls();stableName="";stableCount=0;
+            if(chrome.Kind==ChromeKind.Battle) {StopAll("Stopped — Repel prompt overlaps a battle; check manually");return true;}
+            if(repelPolicy.Expired(clock.Elapsed.TotalSeconds)) {StopAll("Stopped — Repel prompt was not confirmed or did not close; check stock manually");return true;}
+            encounterStatus.Text="Repel prompt detected — movement paused; verifying renewal.";
+            if(!wasActive)Activity("REPEL: possible renewal dialog; movement released");
+            if(!scanning && repelPolicy.NeedsRead(clock.Elapsed.TotalSeconds))ScanRepel(repelPolicy.Bounds);
+            return true;
+        }
+        async void ScanRepel(Rectangle bounds) {
+            scanning=true;int run=generation,epoch=repelPolicy.Epoch;
+            double capturedAt=clock.Elapsed.TotalSeconds;
+            repelPolicy.ReadingStarted(capturedAt);
+            try {
+                RepelPromptReading reading;string signature;
+                using(var image=Native.CaptureClient(output.Target)) {
+                    if(repelVisual.Find(image)!=bounds)return;
+                    signature=VerifiedHeader.Signature(image,RepelPromptVisual.IdentityArea(bounds));repelReads++;
+                    reading=await LocalOcr.ReadRepel(image,bounds);
+                    lastScreenText="[Repel prompt]\n"+LocalOcr.LastRepelText;
+                }
+                if(closing || run!=generation || !controller.Running || epoch!=repelPolicy.Epoch || !repelPolicy.Visible || !continueRepel.Checked)return;
+                double now=clock.Elapsed.TotalSeconds;
+                if(now-capturedAt>1 || !output.Ready() || output.Busy()) {repelPolicy.Confirm(null,now);return;}
+                if(!repelPolicy.Confirm(reading,now))return;
+                using(var fresh=Native.CaptureClient(output.Target)) {
+                    if(visual.Detect(fresh).Kind==ChromeKind.Battle || repelVisual.Find(fresh)!=bounds || VerifiedHeader.Signature(fresh,RepelPromptVisual.IdentityArea(bounds))!=signature) {Activity("REPEL: fresh dialog pixels changed; waiting for a stable read");repelPolicy.Confirm(null,clock.Elapsed.TotalSeconds);return;}
+                }
+                if(!controller.Running || run!=generation || epoch!=repelPolicy.Epoch || !output.Ready() || output.Busy() || clock.Elapsed.TotalSeconds-capturedAt>1)return;
+                Native.ClickClient(output.Target,output.Process,reading.Yes);
+                repelPolicy.Clicked(clock.Elapsed.TotalSeconds);repelClicks++;
+                Activity("REPEL: Yes requested for "+reading.Kind+"; request="+repelPolicy.Requests);
+                encounterStatus.Text="Repel renewal requested — waiting for the prompt to close.";
+            } catch(Exception ex) {
+                if(!closing && run==generation) {
+                    if(controller.Running && autoFocus.Checked && !output.Foreground())Guard(delegate {controller.Tick(clock.Elapsed.TotalSeconds);});
+                    else {Guard(delegate {StopAll("Stopped — Repel renewal check failed; no further item input");});encounterStatus.Text="Repel check failed: "+ex.Message;}
+                }
+            } finally {scanning=false;if(!closing)RefreshState();}
+        }
         void ProbeScene() {
             double began=clock.Elapsed.TotalSeconds;
             ChromeReading chrome;
             using(var image=Native.CaptureClient(output.Target)) {
                 chrome=visual.Detect(image);
-                if(chrome.Kind==ChromeKind.Battle && scene.InBattle)WatchControls(image,chrome);
+                if(WatchRepel(image,chrome)) {visualProbes++;visualMs+=(clock.Elapsed.TotalSeconds-began)*1000;return;}
+                if(encounters.Checked && chrome.Kind==ChromeKind.Battle && scene.InBattle)WatchControls(image,chrome);
             }
             visualProbes++;visualMs+=(clock.Elapsed.TotalSeconds-began)*1000;
             var previous=visualDecision;
@@ -572,7 +634,7 @@ namespace MovementPrototype {
                 visualBattles++;battleStarted=clock.Elapsed.TotalSeconds;firstEscapeLogged=false;
                 stableCount=0;stableName="";readGrace.Reset();nextScan=0;
                 ResetControls();
-                Activity("VISUAL: battle panel appeared; name OCR enabled");
+                Activity("VISUAL: battle panel appeared; "+(encounters.Checked ? "name OCR enabled" : "movement paused; encounter handling off"));
             }
             if(visualDecision==VisualDecision.Move) {
                 bool resume=controller.Paused;
@@ -583,7 +645,7 @@ namespace MovementPrototype {
                     Activity("RESUME: visual world confirmed in "+Math.Round((clock.Elapsed.TotalSeconds-clearStarted)*1000)+"ms; no exit OCR");
                     controller.Tick(clock.Elapsed.TotalSeconds);
                 }
-                encounterStatus.Text="Moving — visual watcher armed; encounter OCR idle.";
+                encounterStatus.Text="Moving — visual watcher armed; encounter OCR idle."+(continueRepel.Checked ? " Continue Repel on." : "");
             } else {
                 controller.Pause(true,clock.Elapsed.TotalSeconds);
                 if(visualDecision==VisualDecision.ValidateWorld)encounterStatus.Text="Starting/refocusing — validating the world once.";
@@ -598,6 +660,7 @@ namespace MovementPrototype {
             detail.Text=hotkeys ? (output.External ? (autoFocus.Checked ? "EXTERNAL INPUT — auto-return requested; Windows may refuse" : "EXTERNAL INPUT — focus loss stops the run") : "PRACTICE — no Windows key events") : "F8/F10 busy — close another controller or shortcut app. Retrying automatically.";
             bool edit=!controller.Running && !controller.Held.HasValue && !pendingStart && !escapeHeld && !previewPending && !scanning;
             foreach(Control c in new Control[] {first,second,hold,gap,external,capture,targets,untilStop,background,autoFocus,targetNames}) c.Enabled=edit;
+            continueRepel.Enabled=edit && !background.Checked;
             encounters.Enabled=edit && !background.Checked;
             clickFallback.Enabled=edit && !background.Checked;
             alerts.Enabled=!background.Checked;
@@ -728,7 +791,7 @@ namespace MovementPrototype {
             Activity("FIRST_ESCAPE: "+Math.Round((clock.Elapsed.TotalSeconds-battleStarted)*1000)+"ms after visual battle detection");
         }
         public string SmokeReport() {
-            return "First=" + first.SelectedItem + "; Second=" + second.SelectedItem + "; GlobalHotkeys=" + hotkeys + "; StartEnabled=" + toggle.Enabled + "; Status=" + detail.Text;
+            return "First=" + first.SelectedItem + "; Second=" + second.SelectedItem + "; GlobalHotkeys=" + hotkeys + "; StartEnabled=" + toggle.Enabled + "; ContinueRepel="+continueRepel.Checked+"; Status=" + detail.Text;
         }
     }
     static class Program {
@@ -737,6 +800,7 @@ namespace MovementPrototype {
             if(args.Length>0 && args[0]=="--self-test") return Tests.Run(args.Length>1 ? args[1] : "test-results.txt");
             if(args.Length>1 && args[0]=="--background-test") return Tests.BackgroundTest(args[1]);
             if(args.Length>1 && args[0]=="--ocr-test") return Tests.OcrTest(args[1]);
+            if(args.Length>2 && args[0]=="--repel-image-test") return Tests.RepelImageTest(args[1],args[2],args.Length==4 && args[3]=="--expect-reject");
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
             if(args.Length>1 && args[0]=="--ui-smoke") {
                 using(var app=new App()) {
@@ -755,7 +819,7 @@ namespace MovementPrototype {
                 }
                 try {
                     var app=new App();
-                    if(args.Length==2 && args[0]=="--prepare-pro") app.PreparePro(args[1]);
+                    if(args.Length>=2 && args[0]=="--prepare-pro") app.PreparePro(args[1],args.Length==3 && args[2]=="--continue-repel");
                     Application.Run(app);
                 }
                 finally { instance.ReleaseMutex(); }
@@ -950,6 +1014,8 @@ namespace MovementPrototype {
                 results.AddRange(RunButtonMatch.Tests());
                 results.AddRange(VisualSceneGate.Tests());
                 results.AddRange(ReadyEscapePolicy.Tests());
+                results.AddRange(RepelPromptMatch.Tests());
+                results.AddRange(RepelRenewalPolicy.Tests());
                 bool leftShift=false, controlDown=false, rightShift=false;
                 var runShift=new RunAwayKey(delegate(Keys key,bool up) { rightShift=!up; });
                 var shiftOutput=new Output(delegate(int key) { return key==0x10 ? leftShift || rightShift : key==0x11 ? controlDown : key==0xA0 ? leftShift : key==0xA1 ? rightShift : false; });
@@ -963,8 +1029,34 @@ namespace MovementPrototype {
                 File.WriteAllLines(path,results); return 0;
             } catch(Exception ex) { results.Add("FAIL: "+ex); File.WriteAllLines(path,results); return 1; }
         }
+        public static int RepelImageTest(string imagePath,string path,bool expectReject=false) {
+            try {
+                using(var loaded=Image.FromFile(imagePath))using(var bitmap=new Bitmap(loaded)) {
+                    var area=new RepelPromptVisual().Find(bitmap);
+                    Check(area.HasValue,"Repel prompt geometry in supplied image");
+                    var read=LocalOcr.ReadRepel(bitmap,area.Value).GetAwaiter().GetResult();
+                    if(expectReject) {
+                        Check(read==null,"Obscured/ambiguous prompt must not authorize a click");
+                        File.WriteAllText(path,"PASS: supplied screenshot with a cursor obscuring prompt text is detected but rejected by exact wording checks. No input sent.");
+                    } else {
+                        Check(read!=null && area.Value.Contains(read.Yes),"Exact Repel prompt and unique Yes button");
+                        File.WriteAllText(path,"PASS: supplied Repel screenshot triggers a cropped read and exact renewal/Yes recognition. No input sent.");
+                    }
+                }
+                return 0;
+            } catch(Exception ex) {File.WriteAllText(path,"FAIL: "+ex);return 1;}
+        }
         public static int OcrTest(string path) {
             try {
+                using(var frame=new Bitmap(640,480))using(var g=Graphics.FromImage(frame))using(var titleFont=new Font("Segoe UI",10,FontStyle.Bold))using(var bodyFont=new Font("Segoe UI",8))using(var buttonFont=new Font("Segoe UI",8,FontStyle.Bold))using(var titleBrush=new SolidBrush(Color.FromArgb(78,74,82)))using(var bodyBrush=new SolidBrush(Color.FromArgb(40,35,50))) {
+                    g.Clear(Color.FromArgb(32,78,45));g.FillRectangle(titleBrush,180,170,267,27);g.FillRectangle(bodyBrush,180,197,267,88);
+                    g.FillRectangle(Brushes.Red,294,285,74,24);g.FillRectangle(Brushes.LimeGreen,368,285,74,24);
+                    g.DrawString("Repel Expired",titleFont,Brushes.LightGray,245,173);g.DrawString("Would you like to use another Max Repel?",bodyFont,Brushes.White,190,225);
+                    g.DrawString("No",buttonFont,Brushes.White,316,287);g.DrawString("Yes",buttonFont,Brushes.White,390,287);g.Flush();
+                    var area=new RepelPromptVisual().Find(frame);Check(area.HasValue,"Synthetic renewal modal trigger");
+                    var read=LocalOcr.ReadRepel(frame,area.Value).GetAwaiter().GetResult();
+                    Check(read!=null && read.Kind=="Max Repel" && read.Yes.X>345 && read.Yes.Y>267,"Cropped renewal OCR finds exact wording and Yes; OCR="+LocalOcr.LastRepelText);
+                }
                 using(var frame=new Bitmap(640,480))using(var g=Graphics.FromImage(frame))using(var font=new Font("Segoe UI",14,FontStyle.Bold))using(var bar=new SolidBrush(Color.FromArgb(40,40,42))) {
                     g.Clear(Color.FromArgb(32,78,45));g.FillRectangle(bar,0,50,640,30);g.FillRectangle(Brushes.Black,480,80,160,240);
                     g.DrawString("Advay0",font,Brushes.White,80,52);g.DrawString("VS.",font,Brushes.Gold,205,52);g.DrawString("Wild Seedot",font,Brushes.White,250,52);
@@ -1004,7 +1096,7 @@ namespace MovementPrototype {
                         var quickWorld=EncounterRecognition.Parse(LocalOcr.ReadGame(game,false).GetAwaiter().GetResult());
                         Check(quickWorld.Overworld && !quickWorld.Battle,"fast two-region OCR confirms overworld");
                     }
-                    File.WriteAllText(path,"PASS: local Windows OCR reads synthetic wild header and battle commands.\n"+text); return 0;
+                    File.WriteAllText(path,"PASS: Windows OCR reads an exact Max Repel renewal and its Yes button; synthetic wild header and battle commands also pass.\n"+text); return 0;
                 }
             } catch(Exception ex) { File.WriteAllText(path,"FAIL: "+ex); return 1; }
         }

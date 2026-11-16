@@ -1,0 +1,1 @@
+PASS: supplied screenshot with a cursor obscuring prompt text is detected but rejected by exact wording checks. No input sent.

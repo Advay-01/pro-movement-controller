@@ -18,6 +18,7 @@ namespace MovementPrototype {
         }
     }
     public static class LocalOcr {
+        public static string LastRepelText {get;private set;}
         static readonly Queue<OcrEngine> engines=new Queue<OcrEngine>();
         static OcrEngine AcquireEngine() {
             lock(engines)if(engines.Count>0)return engines.Dequeue();
@@ -37,6 +38,40 @@ namespace MovementPrototype {
             using(var crop=EnlargeRectangle(image,heading)) {
                 var result=await Recognize(crop);
                 return new RunButtonCandidate {Header=TextOf(result),Controls="",IdentityBounds=CaptionBounds(result,heading,image.Size)};
+            }
+        }
+        public static Bitmap RepelOcrImage(Bitmap image,Rectangle area) {
+            using(var mask=image.Clone(area,System.Drawing.Imaging.PixelFormat.Format32bppArgb)) {
+                var bits=mask.LockBits(new Rectangle(Point.Empty,mask.Size),System.Drawing.Imaging.ImageLockMode.ReadWrite,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                try {
+                    byte[] row=new byte[mask.Width*4];
+                    for(int y=0;y<mask.Height;y++) {
+                        var pointer=IntPtr.Add(bits.Scan0,y*bits.Stride);
+                        System.Runtime.InteropServices.Marshal.Copy(pointer,row,0,row.Length);
+                        for(int x=0;x<row.Length;x+=4) {
+                            int min=Math.Min(row[x],Math.Min(row[x+1],row[x+2])),max=Math.Max(row[x],Math.Max(row[x+1],row[x+2]));
+                            byte value=(byte)(min>=140 && max-min<=90 ? 0 : 255);
+                            row[x]=row[x+1]=row[x+2]=value;row[x+3]=255;
+                        }
+                        System.Runtime.InteropServices.Marshal.Copy(row,0,pointer,row.Length);
+                    }
+                } finally {mask.UnlockBits(bits);}
+                return EnlargeRectangle(mask,new Rectangle(Point.Empty,mask.Size));
+            }
+        }
+        public static async Task<RepelPromptReading> ReadRepel(Bitmap image,Rectangle area) {
+            int buttonTop=(int)(area.Height*.76);
+            using(var header=EnlargeRectangle(image,new Rectangle(area.X,area.Y,area.Width,buttonTop)))
+            using(var buttons=RepelOcrImage(image,new Rectangle(area.X,area.Y+buttonTop,area.Width,area.Height-buttonTop))) {
+                var text=Recognize(header);var controls=Recognize(buttons);await Task.WhenAll(text,controls);
+                var words=new List<ButtonWord>();
+                foreach(var line in controls.Result.Lines)foreach(var word in line.Words) {
+                    var r=word.BoundingRect;words.Add(new ButtonWord(word.Text,(float)r.X,(float)r.Y+buttonTop*3,(float)r.Width,(float)r.Height));
+                }
+                LastRepelText=TextOf(text.Result)+"\n"+TextOf(controls.Result);
+                var reading=RepelPromptMatch.Parse(LastRepelText,words,area.Width*3,area.Height*3);
+                if(reading!=null)reading.Yes=new Point(area.Left+reading.Yes.X/3,area.Top+reading.Yes.Y/3);
+                return reading;
             }
         }
         static string TextOf(OcrResult result) {var lines=new List<string>();foreach(var line in result.Lines)lines.Add(line.Text);return String.Join("\n",lines);}

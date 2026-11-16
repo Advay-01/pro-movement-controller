@@ -41,4 +41,10 @@ PASS: Run follows ready controls immediately; dialogue/busy states block input; 
 PASS: accepted failures and ignored-request time are bounded; reset and unknown controls block action
 PASS: visual Run control separates enabled gray/blue hover, busy red and absent buttons
 PASS: verified header reuse requires exact pixel identity; a changed heading forces new OCR
+PASS: Repel renewal accepts only the exact expired/use-another prompt for Repel, Super Repel or Max Repel
+PASS: purchases, releases, unrelated items, chat/extra text and ambiguous/misaligned buttons never authorize Repel clicks
+PASS: cheap dialog geometry triggers a cropped read; ordinary world colors trigger no prompt OCR
+PASS: Repel requires two recent matching prompt reads and blocks absent/stale evidence
+PASS: dialog disappearance, changed geometry and stop/focus reset invalidate pending renewal
+PASS: ignored Repel clicks retry only with fresh reads and stop after a bounded deadline
 PASS: owned Right Shift avoids self-stop; manual Right Shift, Left Shift and other modifiers retain safety checks

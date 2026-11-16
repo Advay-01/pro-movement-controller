@@ -10,6 +10,7 @@ $compilerArgs += $references | ForEach-Object { '/reference:' + $_ }
 $compilerArgs += @((Join-Path $PSScriptRoot 'MovementController.cs'),(Join-Path $PSScriptRoot 'EncounterRecognition.cs'),(Join-Path $PSScriptRoot 'FocusRecovery.cs'),(Join-Path $PSScriptRoot 'RunAwayKey.cs'),(Join-Path $PSScriptRoot 'EncounterPacing.cs'),(Join-Path $PSScriptRoot 'RunButtonMatch.cs'))
 $compilerArgs += (Join-Path $PSScriptRoot 'BattleVisual.cs')
 $compilerArgs += (Join-Path $PSScriptRoot 'BattleControlReady.cs')
+$compilerArgs += (Join-Path $PSScriptRoot 'RepelRenewal.cs')
 & $compiler @compilerArgs
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 Write-Host 'Built MovementController.exe'

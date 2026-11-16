@@ -1,4 +1,4 @@
-PASS: local Windows OCR reads synthetic wild header and battle commands.
+PASS: Windows OCR reads an exact Max Repel renewal and its Yes button; synthetic wild header and battle commands also pass.
 AdvayO VS. Wild Seedot
 Fight
 Items
