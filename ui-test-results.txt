@@ -1,9 +1,8 @@
-PASS: 50 local controller/recognition/target/Repel/readiness/cleanup check groups.
-PASS: Windows OCR positive Repel renewal/Yes and battle fixtures.
-PASS: supplied image with cursor-obscured wording is safely rejected; no image is distributed.
-PASS: local receiver background tests; these establish no PRO background compatibility.
-PASS: normal local practice starts with Continue Repel off.
-LIVE: final v1.9 build renewed Max Repel twice, then resumed movement after both dialogs closed.
-LIVE: exactly four cropped prompt OCR calls; zero world or battle OCR calls in this city session.
-LIVE: F8 started the run; F10 emergency-stopped and latched it off.
-Exact/near-target and existing escape-gate checks passed locally; no live target or battle in this final session.
+PASS: 56 local check groups: battle-wait yielding, balanced interrupted turns, input leases, cancellation, target protection and global emergency stop.
+PASS: battle/Repel Windows OCR fixtures, obscured-prompt rejection and three-member HUD.
+LIVE: Mimikyu in window 1; Ralts plus Continue Repel in window 2; normal 0.80-second turns.
+LIVE: retained logs show 5 window-1 escape requests and 1 window-2 Max Repel renewals.
+LIVE: brief window-1 turns observed: 131 ms, returning focus promptly to the walking hunt.
+LIVE: both profiles performed zero world OCR calls; F10 latched both off.
+Runtime logs rotated at their size limit; visual counters cover the full run, retained event counts are partial.
+LIMIT: no live Ralts-window battle or protected target appeared; independent target protection passed local tests.

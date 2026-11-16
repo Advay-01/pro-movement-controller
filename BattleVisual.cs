@@ -50,7 +50,7 @@ namespace MovementPrototype {
                 }
                 if(colors>=3)colored++;
             }
-            return new ChromeReading {Kind=rows>=4 && colored>=2 ? ChromeKind.Clear : ChromeKind.Transition,HudRows=rows,ColorRows=colored};
+            return new ChromeReading {Kind=rows>=3 && colored>=2 ? ChromeKind.Clear : ChromeKind.Transition,HudRows=rows,ColorRows=colored};
         }
         public ChromeReading Detect(Bitmap image) {
             width=image.Width; height=image.Height; stride=width*4;
@@ -126,6 +126,11 @@ namespace MovementPrototype {
                 if(detector.Detect(image).Kind!=ChromeKind.Transition)throw new Exception("A colored background without the game HUD must remain paused");
                 DrawHud(g);
                 if(detector.Detect(image).Kind!=ChromeKind.Clear)throw new Exception("Visible game HUD must confirm world without OCR");
+                g.Clear(Color.FromArgb(32,78,45));DrawHud(g,3);
+                if(detector.Detect(image).Kind!=ChromeKind.Clear)throw new Exception("Observed three-member party must confirm the world");
+                g.Clear(Color.FromArgb(32,78,45));DrawHud(g,2);
+                if(detector.Detect(image).Kind!=ChromeKind.Transition)throw new Exception("Insufficient HUD evidence must remain paused");
+                g.Clear(Color.FromArgb(32,78,45));DrawHud(g);
                 g.FillRectangle(Brushes.DimGray,150,0,200,35);g.DrawString("VS",font,Brushes.Gold,200,5);
                 if(detector.Detect(image).Kind!=ChromeKind.Clear)throw new Exception("Gold HUD decoration alone must not trigger");
                 using(var bar=new SolidBrush(Color.FromArgb(40,40,42)))foreach(int top in new int[] {6,50,85}) {
@@ -140,8 +145,8 @@ namespace MovementPrototype {
             }
             return new List<string> {"PASS: visual watcher distinguishes battle chrome, world/HUD decoration, dark world and blank/login backgrounds","PASS: walking and startup use visual HUD confirmation without OCR; battle arms recognition; exit resumes after 160ms; focus resets trust","PASS: no opponent OCR runs while walking, during uncertain transitions, or while an accepted escape is settling"};
         }
-        static void DrawHud(Graphics g) {
-            using(var fill=new SolidBrush(Color.FromArgb(45,45,45)))for(int n=0;n<6;n++) {int cy=(int)(480*(.065+n*.095));g.FillRectangle(fill,40,cy-14,75,28);g.FillEllipse(Brushes.OrangeRed,10,cy-12,25,24);}
+        static void DrawHud(Graphics g,int count=6) {
+            using(var fill=new SolidBrush(Color.FromArgb(45,45,45)))for(int n=0;n<count;n++) {int cy=(int)(480*(.065+n*.095));g.FillRectangle(fill,40,cy-14,75,28);g.FillEllipse(Brushes.OrangeRed,10,cy-12,25,24);}
         }
     }
 }

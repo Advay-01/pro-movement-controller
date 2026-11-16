@@ -11,6 +11,7 @@ $compilerArgs += @((Join-Path $PSScriptRoot 'MovementController.cs'),(Join-Path 
 $compilerArgs += (Join-Path $PSScriptRoot 'BattleVisual.cs')
 $compilerArgs += (Join-Path $PSScriptRoot 'BattleControlReady.cs')
 $compilerArgs += (Join-Path $PSScriptRoot 'RepelRenewal.cs')
+$compilerArgs += (Join-Path $PSScriptRoot 'DualController.cs')
 & $compiler @compilerArgs
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 Write-Host 'Built MovementController.exe'

@@ -37,6 +37,7 @@ namespace MovementPrototype {
         Keys? held;
         double began, next;
         bool second;
+        bool? turnStartSide;
         readonly FocusRecovery recovery = new FocusRecovery();
         public bool RecoveringFocus { get { return recovery.Active; } }
         public event Action FocusRecoveryStarted;
@@ -52,7 +53,7 @@ namespace MovementPrototype {
             if (!output.Ready()) throw new InvalidOperationException("The selected target is unavailable. Keep it restored; foreground mode also requires focus and released modifier keys.");
             config = new Settings { First=s.First, Second=s.Second, Hold=s.Hold, Gap=s.Gap, Limit=s.Limit, UntilStopped=s.UntilStopped, AutoFocus=s.AutoFocus };
             recovery.Cancel();
-            began = now; next = now; second = false; Paused=initiallyPaused; Running = true;
+            began = now; next = now; second = false;turnStartSide=null; Paused=initiallyPaused; Running = true;
             Status = initiallyPaused ? "Starting — visual scene check" : "Running";
             Tick(now);
         }
@@ -84,6 +85,7 @@ namespace MovementPrototype {
                     Release(); second = !second; next = now + config.Gap;
                     Status = "Running — gap";
                 } else {
+                    if(!turnStartSide.HasValue)turnStartSide=second;
                     Keys k = second ? config.Second : config.First;
                     // Remember before sending, so an uncertain send is followed by key-up.
                     held = k; output.Down(k); next = now + config.Hold;
@@ -97,6 +99,12 @@ namespace MovementPrototype {
         }
         void Release() { if (held.HasValue) { output.Up(held.Value); held = null; } }
         public bool Paused { get; private set; }
+        public void BeginTurn() {turnStartSide=null;}
+        public void YieldTurn(double now) {
+            if(!Running)return;
+            Release();if(turnStartSide.HasValue)second=!turnStartSide.Value;
+            turnStartSide=null;Paused=true;Status="Paused — waiting for shared focus";
+        }
         public void Pause(bool paused, double now) {
             if(!Running) return;
             if(paused) { Release(); Paused=true; Status="Paused — scene transition"; }
@@ -203,6 +211,7 @@ namespace MovementPrototype {
         }
         public bool External;
         public bool Background;
+        public bool LeaseRequired,LeaseGranted;
         public IntPtr Target;
         public uint Process;
         public Keys? PracticeKey;
@@ -220,6 +229,7 @@ namespace MovementPrototype {
             if(External && !Background && Available() && !Busy()) Native.SetForegroundWindow(Target);
         }
         public bool Ready() {
+            if(LeaseRequired && !LeaseGranted)return false;
             if (!External) return true;
             uint pid; Native.GetWindowThreadProcessId(Target, out pid);
             if(Target==IntPtr.Zero || !Native.IsWindow(Target) || Native.IsIconic(Target) || pid!=Process) return false;
@@ -228,6 +238,7 @@ namespace MovementPrototype {
             return !modifiers && Target != IntPtr.Zero && Native.IsWindow(Target) && !Native.IsIconic(Target) && Native.GetForegroundWindow() == Target && pid == Process;
         }
         public void Down(Keys key) {
+            if(LeaseRequired && !LeaseGranted)throw new InvalidOperationException("This profile does not hold the shared input lease.");
             if (External) {
                 if (!Ready()) throw new InvalidOperationException("Target lost focus.");
                 if(Background) Native.PostKey(Target,Process,key,false); else Native.Send(key, false);
@@ -238,7 +249,10 @@ namespace MovementPrototype {
             else PracticeKey=null;
         }
     }
-    sealed class App : Form {
+    sealed class App : Form,ISharedHunt {
+        readonly bool managedMode;
+        readonly string statsName;
+        bool managedArmed,managedStarted,managedResumePending,managedBattleContinuity,managedWaiting,managedReadinessObserved;
         sealed class WindowChoice {
             public IntPtr Handle; public uint Process; public string Title;
             public override string ToString() { return Title + " (" + Process + ")"; }
@@ -276,7 +290,7 @@ namespace MovementPrototype {
         ControlReady loggedReady=ControlReady.Unknown;
         string verifiedHeaderSignature,verifiedHeaderName;
         Rectangle? verifiedHeadingArea;
-        void ResetControls() {trackedRun=trackedItems=null;readyEscape.Reset();loggedReady=ControlReady.Unknown;verifiedHeaderSignature=verifiedHeaderName=null;verifiedHeadingArea=null;}
+        void ResetControls() {trackedRun=trackedItems=null;readyEscape.Reset();loggedReady=ControlReady.Unknown;verifiedHeaderSignature=verifiedHeaderName=null;verifiedHeadingArea=null;managedWaiting=false;}
         bool SameControls(Bitmap image,ChromeReading chrome) {
             return trackedRun.HasValue && trackedItems.HasValue && image.Width==trackedWidth && image.Height==trackedHeight && Math.Abs(chrome.GoldX-trackedGoldX)<=8 && Math.Abs(chrome.Header.Top-trackedHeaderY)<=8;
         }
@@ -307,10 +321,10 @@ namespace MovementPrototype {
             if(visualProbes==0)return;
             try {
                 string stats=String.Format(System.Globalization.CultureInfo.InvariantCulture,"{{\"visual_probes\":{0},\"probe_mean_ms\":{1:0.000},\"startup_or_refocus_world_ocr_calls\":{2},\"battle_ocr_calls\":{3},\"battle_appearances\":{4},\"visual_resumes\":{5}",visualProbes,visualMs/visualProbes,worldOcrCalls,battleOcrCalls,visualBattles,visualResumes);
-                File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"visual-stats.json"),stats+",\"repel_prompt_ocr_calls\":"+repelReads+",\"repel_requests\":"+repelClicks+"}");
+                File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,statsName),stats+",\"repel_prompt_ocr_calls\":"+repelReads+",\"repel_requests\":"+repelClicks+"}");
             } catch(IOException) {} catch(UnauthorizedAccessException) {}
         }
-        readonly string activityPath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"activity.log");
+        readonly string activityPath;
         string lastReadingSummary="";
         void Activity(string message) {
             try {
@@ -342,20 +356,33 @@ namespace MovementPrototype {
         bool pendingStart;
         float x=280, y=65;
         string lastStatus="", lastLoggedStatus="";
-        public App() {
+        public App(string managedSession=null) {
+            managedMode=managedSession!=null;
+            activityPath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,managedMode ? "activity-"+managedSession+".log" : "activity.log");
+            statsName=managedMode ? "visual-stats-"+managedSession+".json" : "visual-stats.json";
+            output.LeaseRequired=managedMode;
             controller = new Controller(output);
             output.RunKey=runKey;
-            Text="Movement Controller v1.9 — testing prototype";
+            Text="Movement Controller v2.0 — testing prototype";
             ClientSize=new Size(630,900); MinimumSize=new Size(650,780);
             Font=new Font("Segoe UI",10); StartPosition=FormStartPosition.CenterScreen;
             var flow=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false, Padding=new Padding(22), AutoScroll=true };
             Controls.Add(flow);
             flow.Controls.Add(new Label { Text="Back-and-forth movement", Font=new Font(Font.FontFamily,16,FontStyle.Bold), AutoSize=true });
             var emergency=new Button { Text="EMERGENCY STOP (F10)", BackColor=Color.Firebrick, ForeColor=Color.White, AutoSize=true, UseVisualStyleBackColor=false };
-            flow.Controls.Add(Row(toggle,emergency)); flow.Controls.Add(reset);
+            if(!managedMode) {flow.Controls.Add(Row(toggle,emergency));flow.Controls.Add(reset);}
+            else MinimumSize=Size.Empty;
+            if(!managedMode) {
+                var dual=new Button {Text="Two-window hunting mode",AutoSize=true};flow.Controls.Add(dual);
+                dual.Click+=delegate {Guard(delegate {
+                    StopAll("Stopped for two-window mode");timer.Stop();Native.UnregisterHotKey(Handle,1);Native.UnregisterHotKey(Handle,2);hotkeys=false;Hide();
+                    try {using(var shared=new DualApp())shared.ShowDialog(this);}
+                    finally {Show();RegisterShortcuts();timer.Start();}
+                });};
+            }
             flow.Controls.Add(state); flow.Controls.Add(detail);
             state.MaximumSize=new Size(570,0); detail.MaximumSize=new Size(570,0);
-            flow.Controls.Add(new Label { Text="F8: start / stop     F10: emergency stop (global)\nPractice mode is the default. No game input is sent in practice mode.", AutoSize=true, Margin=new Padding(3,8,3,12) });
+            flow.Controls.Add(new Label { Text=managedMode ? "Shared F8 starts/stops both. F10 stops all input.\nEach profile keeps its own target, Repel and movement settings." : "F8: start / stop     F10: emergency stop (global)\nPractice mode is the default. No game input is sent in practice mode.", AutoSize=true, Margin=new Padding(3,8,3,12) });
             foreach (var c in new ComboBox[] {first,second}) {
                 c.DropDownStyle=ComboBoxStyle.DropDownList; c.Width=85;
                 c.Items.AddRange(new object[] { Keys.Left, Keys.Right, Keys.Up, Keys.Down, Keys.W, Keys.A, Keys.S, Keys.D });
@@ -382,7 +409,7 @@ namespace MovementPrototype {
                 MessageBox.Show(this,lastScreenText.Length==0 ? "No screen reading yet." : lastScreenText,"Last recognized screen text",MessageBoxButtons.OK,MessageBoxIcon.Information);
             };
             untilStop.CheckedChanged += delegate { RefreshState(); };
-            flow.Controls.Add(external); flow.Controls.Add(autoFocus); flow.Controls.Add(backgroundNote);
+            flow.Controls.Add(external);if(!managedMode) {flow.Controls.Add(autoFocus);flow.Controls.Add(backgroundNote);}
             flow.Controls.Add(capture); flow.Controls.Add(targets); flow.Controls.Add(target);
             flow.Controls.Add(new Label { Text="PRO prohibits unauthorized bots and macros. Use live input only within\nexplicit staff-approved test scope. Selecting a window is not authorization.", AutoSize=true, ForeColor=Color.DarkRed });
             flow.Controls.Add(practice); flow.Controls.Add(log);
@@ -417,7 +444,7 @@ namespace MovementPrototype {
                 encounterStatus.Text=background.Checked ? "Background movement only — encounter recognition and target alerts off." : "Encounter handling off — PRO must stay visible and focused.";
                 RefreshState();
             };
-            timer.Tick += delegate { Tick(); }; timer.Start();
+            timer.Tick += delegate { Tick(); };if(!managedMode)timer.Start();
             FormClosing += delegate(object sender, FormClosingEventArgs e) {
                 try { StopAll("Closed"); } catch(Exception ex) { e.Cancel=true; MessageBox.Show("Key release failed: " + ex.Message + "\nPress and release the movement key manually before closing."); return; }
                 closing=true; timer.Stop(); tray.Dispose();
@@ -425,6 +452,57 @@ namespace MovementPrototype {
             RefreshWindows(); RefreshState();
             Activity("Controller opened; no automatic start.");
         }
+        public long Window {get{return output.Target.ToInt64();}}
+        public bool Wanted {get{return managedArmed && (!managedStarted || controller.Running);}}
+        public bool Available {get{return output.Available();}}
+        public bool Reading {get{return scanning;}}
+        public bool Waiting {get{return managedWaiting && managedReadinessObserved;}}
+        public bool ManagedShiftHeld {get{return escapeHeld;}}
+        public bool ManagedLatched {get{return controller.Latched;}}
+        public void PrepareManaged(string protectedTarget,uint process,bool renewRepel) {
+            EncounterRecognition.Targets(protectedTarget);WindowChoice match=null;int count=0;
+            foreach(WindowChoice choice in targets.Items)if(choice.Process==process && choice.Title=="PROClient") {match=choice;count++;}
+            if(count!=1)throw new InvalidOperationException("Select exactly one visible PRO window for process "+process);
+            targets.SelectedItem=match;targetNames.Text=protectedTarget;hold.Value=.30m;gap.Value=.05m;
+            untilStop.Checked=true;external.Checked=true;encounters.Checked=true;continueRepel.Checked=renewRepel;
+            controller.Stop("Ready — shared controller starts with F8");RefreshState();
+            Activity("PROFILE: protected="+protectedTarget+"; repel="+renewRepel+"; process="+process);
+        }
+        public void ValidateManaged() {
+            if(!managedMode || scanning)throw new InvalidOperationException("Wait for profile recognition to finish.");
+            if(controller.Latched)throw new InvalidOperationException("Reset the shared emergency stop before restarting.");
+            if(!external.Checked || !output.Available())throw new InvalidOperationException("Enable input and select a restored game window in each profile.");
+            ReadSettings().Validate();
+            if(encounters.Checked)desiredNames=EncounterRecognition.Targets(targetNames.Text);
+        }
+        public void QueueManaged() {ValidateManaged();managedArmed=true;managedStarted=false;controller.Stop("Queued — waiting for shared focus");RefreshState();}
+        public new void Enter() {
+            output.LeaseGranted=true;managedReadinessObserved=false;
+            try {if(!managedStarted) {StartRun();managedStarted=true;}controller.BeginTurn();nextProbe=0;RefreshState();}
+            catch {output.LeaseGranted=false;throw;}
+        }
+        public new void Leave() {
+            try {controller.YieldTurn(clock.Elapsed.TotalSeconds);ReleaseEscape();}
+            finally {
+                output.LeaseGranted=false;generation++;stableCount=0;stableName="";
+                verifiedHeaderSignature=verifiedHeaderName=null;verifiedHeadingArea=null;
+                managedResumePending=scene.InBattle;readyEscape.Observe(ControlReady.Unknown,clock.Elapsed.TotalSeconds);
+                repelPolicy.Suspend();scene.Reset();visualDecision=VisualDecision.ValidateWorld;lastChrome=ChromeKind.Transition;nextProbe=nextScan=0;
+                if(!controller.Running)managedArmed=false;RefreshState();
+            }
+        }
+        public void Service() {
+            if(!output.LeaseGranted)return;
+            Tick();
+            if(visualDecision==VisualDecision.ReadBattle && trackedRun.HasValue && readyEscape.State==ControlReady.Busy)managedWaiting=managedWaiting || stableCount>=2;
+            else if(readyEscape.State==ControlReady.Ready || lastChrome==ChromeKind.Clear)managedWaiting=false;
+        }
+        public void End(bool emergency,string reason) {
+            try {if(emergency)EmergencyAll();else StopAll(reason);}
+            finally {managedArmed=false;managedStarted=false;output.LeaseGranted=false;RefreshState();}
+        }
+        public void ResetManaged() {End(false,"Ready — both stopped");ReleaseEscape();controller.Reset();RefreshState();}
+        public void CloseManaged() {End(false,"Closed profile");closing=true;timer.Stop();tray.Dispose();Dispose();}
         public void PreparePro(string protectedTarget,bool renewRepel=false) {
             EncounterRecognition.Targets(protectedTarget);
             WindowChoice match=null; int count=0;
@@ -466,6 +544,7 @@ namespace MovementPrototype {
             RegisterShortcuts();
         }
         void RegisterShortcuts() {
+            if(managedMode)return;
             if(hotkeys || !IsHandleCreated) return;
             bool a=Native.RegisterHotKey(Handle,1,0x4000,(uint)Keys.F8);
             bool b=Native.RegisterHotKey(Handle,2,0x4000,(uint)Keys.F10);
@@ -512,6 +591,7 @@ namespace MovementPrototype {
         }
         void StartRun() {
             generation++; stableName=""; stableCount=0; escapeAttempts=0;
+            managedResumePending=managedBattleContinuity=managedWaiting=managedReadinessObserved=false;
             repelPolicy.Reset();repelReads=repelClicks=0;
             readGrace.Reset();
             scene.Reset();visualDecision=VisualDecision.ValidateWorld;lastChrome=ChromeKind.Transition;nextProbe=0;
@@ -525,7 +605,7 @@ namespace MovementPrototype {
         void ReleaseEscape() { runKey.Release(); }
         void StopAll(string reason) { lastError=null; pendingStart=false; previewPending=false; generation++;repelPolicy.Reset(); try { controller.Stop(reason); } finally { ReleaseEscape(); SaveVisualStats(); } }
         void EmergencyAll() { lastError=null; pendingStart=false; previewPending=false; generation++;repelPolicy.Reset(); try { controller.Emergency(); } finally { ReleaseEscape(); SaveVisualStats(); } }
-        Settings ReadSettings() { return new Settings { First=(Keys)first.SelectedItem, Second=(Keys)second.SelectedItem, Hold=(double)hold.Value, Gap=(double)gap.Value, Limit=(double)limit.Value, UntilStopped=untilStop.Checked, AutoFocus=autoFocus.Checked && output.External && !output.Background }; }
+        Settings ReadSettings() { return new Settings { First=(Keys)first.SelectedItem, Second=(Keys)second.SelectedItem, Hold=(double)hold.Value, Gap=(double)gap.Value, Limit=(double)limit.Value, UntilStopped=untilStop.Checked, AutoFocus=!managedMode && autoFocus.Checked && output.External && !output.Background }; }
         void Guard(Action action) {
             try { action(); }
             catch(Exception ex) {
@@ -552,7 +632,8 @@ namespace MovementPrototype {
             if(controller.Running && !controller.RecoveringFocus && output.Ready() && (encounters.Checked || continueRepel.Checked)) {
                 double now=clock.Elapsed.TotalSeconds;
                 if(now>=nextProbe) { nextProbe=now+.08; Guard(ProbeScene); }
-                bool needName=encounters.Checked && !repelPolicy.Active && visualDecision==VisualDecision.ReadBattle && (stableCount<2 || !trackedRun.HasValue || readyEscape.Due(now) || readyEscape.StopRequired(now));
+                bool waitingForDialogue=managedMode && managedWaiting && readyEscape.State==ControlReady.Busy;
+                bool needName=encounters.Checked && !waitingForDialogue && !repelPolicy.Active && visualDecision==VisualDecision.ReadBattle && (stableCount<2 || !trackedRun.HasValue || readyEscape.Due(now) || readyEscape.StopRequired(now));
                 if(controller.Running && !scanning && now>=nextScan && needName) ScanEncounter();
                 if(now>=nextVisualStats) {nextVisualStats=now+5;SaveVisualStats();}
             }
@@ -622,7 +703,10 @@ namespace MovementPrototype {
             using(var image=Native.CaptureClient(output.Target)) {
                 chrome=visual.Detect(image);
                 if(WatchRepel(image,chrome)) {visualProbes++;visualMs+=(clock.Elapsed.TotalSeconds-began)*1000;return;}
-                if(encounters.Checked && chrome.Kind==ChromeKind.Battle && scene.InBattle)WatchControls(image,chrome);
+                if(encounters.Checked && chrome.Kind==ChromeKind.Battle && (scene.InBattle || managedResumePending)) {
+                    WatchControls(image,chrome);
+                    if(managedMode && trackedRun.HasValue)managedReadinessObserved=true;
+                }
             }
             visualProbes++;visualMs+=(clock.Elapsed.TotalSeconds-began)*1000;
             var previous=visualDecision;
@@ -631,12 +715,14 @@ namespace MovementPrototype {
             lastChrome=chrome.Kind;
             visualDecision=scene.Observe(chrome.Kind,clock.Elapsed.TotalSeconds);
             if(enteringBattle) {
-                visualBattles++;battleStarted=clock.Elapsed.TotalSeconds;firstEscapeLogged=false;
-                stableCount=0;stableName="";readGrace.Reset();nextScan=0;
-                ResetControls();
+                if(!managedMode || !managedBattleContinuity) {visualBattles++;battleStarted=clock.Elapsed.TotalSeconds;firstEscapeLogged=false;}
+                managedBattleContinuity=true;
+                stableCount=0;stableName="";if(!managedResumePending)readGrace.Reset();nextScan=0;
+                if(!managedResumePending)ResetControls();managedResumePending=false;
                 Activity("VISUAL: battle panel appeared; "+(encounters.Checked ? "name OCR enabled" : "movement paused; encounter handling off"));
             }
             if(visualDecision==VisualDecision.Move) {
+                managedResumePending=managedBattleContinuity=false;
                 bool resume=controller.Paused;
                 controller.Pause(false,clock.Elapsed.TotalSeconds);
                 if(resume) {
@@ -657,15 +743,15 @@ namespace MovementPrototype {
             state.Text=previewPending ? "Reading in " + Math.Max(0,Math.Ceiling(previewAt-clock.Elapsed.TotalSeconds)) + "s — switch to PRO (no keys)" : pendingStart ? "Starting in " + Math.Max(0,Math.Ceiling(captureAt-clock.Elapsed.TotalSeconds)) + "s — switch to selected window" : controller.Status;
             if(lastError!=null && !controller.Running && !pendingStart && !previewPending) state.Text="Stopped — " + lastError;
             state.ForeColor=controller.Latched ? Color.Firebrick : Color.DarkSlateGray;
-            detail.Text=hotkeys ? (output.External ? (autoFocus.Checked ? "EXTERNAL INPUT — auto-return requested; Windows may refuse" : "EXTERNAL INPUT — focus loss stops the run") : "PRACTICE — no Windows key events") : "F8/F10 busy — close another controller or shortcut app. Retrying automatically.";
-            bool edit=!controller.Running && !controller.Held.HasValue && !pendingStart && !escapeHeld && !previewPending && !scanning;
+            detail.Text=managedMode ? (managedArmed ? (output.LeaseGranted ? "Shared input — this window has focus" : "Shared input — waiting for this window's turn") : "Two-window profile — input starts only from the shared controls") : hotkeys ? (output.External ? (autoFocus.Checked ? "EXTERNAL INPUT — auto-return requested; Windows may refuse" : "EXTERNAL INPUT — focus loss stops the run") : "PRACTICE — no Windows key events") : "F8/F10 busy — close another controller or shortcut app. Retrying automatically.";
+            bool edit=!managedArmed && !controller.Running && !controller.Held.HasValue && !pendingStart && !escapeHeld && !previewPending && !scanning;
             foreach(Control c in new Control[] {first,second,hold,gap,external,capture,targets,untilStop,background,autoFocus,targetNames}) c.Enabled=edit;
             continueRepel.Enabled=edit && !background.Checked;
             encounters.Enabled=edit && !background.Checked;
             clickFallback.Enabled=edit && !background.Checked;
             alerts.Enabled=!background.Checked;
             screenReading.Enabled=edit && lastScreenText.Length>0;
-            checkEncounter.Enabled=edit;
+            checkEncounter.Enabled=edit && !managedMode;
             limit.Enabled=edit && !untilStop.Checked;
             toggle.Text=previewPending ? "Cancel reading (F8)" : pendingStart ? "Cancel start (F8)" : controller.Running ? "Stop (F8)" : "Start (F8)";
             reset.Enabled=controller.Latched; toggle.Enabled=!controller.Latched || controller.Running || pendingStart;
@@ -739,7 +825,7 @@ namespace MovementPrototype {
             if(alerts.Checked) {
                 tray.Visible=true; tray.BalloonTipTitle=exact ? "Target Pokémon found" : "Check this encounter";
                 tray.BalloonTipText=name+" — movement stopped. Return to PRO.";
-                tray.ShowBalloonTip(10000); Native.Flash(Handle); System.Media.SystemSounds.Exclamation.Play();
+                tray.ShowBalloonTip(10000); Native.Flash(TopLevelControl==null ? Handle : TopLevelControl.Handle); System.Media.SystemSounds.Exclamation.Play();
             }
         }
         void ApplyReading(EncounterReading reading,RunButtonCandidate candidate=null,double capturedAt=0,bool capturedReady=false,string headerSignature=null,Rectangle? headingArea=null) {
@@ -811,6 +897,10 @@ namespace MovementPrototype {
                 }
                 return 0;
             }
+            if(args.Length>1 && args[0]=="--dual-ui-smoke") {
+                using(var dual=new DualApp()) {dual.Show();Application.DoEvents();File.WriteAllText(args[1]+".txt",dual.SmokeReport());using(var bitmap=new Bitmap(dual.Width,dual.Height)) {dual.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));bitmap.Save(args[1]);}dual.Close();}
+                return 0;
+            }
             bool firstInstance;
             using(var instance=new System.Threading.Mutex(true,@"Local\MovementPrototype.Controller",out firstInstance)) {
                 if(!firstInstance) {
@@ -818,9 +908,15 @@ namespace MovementPrototype {
                     return 0;
                 }
                 try {
-                    var app=new App();
-                    if(args.Length>=2 && args[0]=="--prepare-pro") app.PreparePro(args[1],args.Length==3 && args[2]=="--continue-repel");
-                    Application.Run(app);
+                    if(args.Length>0 && (args[0]=="--dual" || args[0]=="--prepare-dual")) {
+                        var dual=new DualApp();
+                        if(args[0]=="--prepare-dual") {if(args.Length!=5)throw new ArgumentException("Use --prepare-dual <target1> <target2> <process1> <process2>");dual.Prepare(args[1],args[2],UInt32.Parse(args[3]),UInt32.Parse(args[4]));}
+                        Application.Run(dual);
+                    } else {
+                        var app=new App();
+                        if(args.Length>=2 && args[0]=="--prepare-pro") app.PreparePro(args[1],args.Length==3 && args[2]=="--continue-repel");
+                        Application.Run(app);
+                    }
                 }
                 finally { instance.ReleaseMutex(); }
             }
@@ -1014,6 +1110,19 @@ namespace MovementPrototype {
                 results.AddRange(RunButtonMatch.Tests());
                 results.AddRange(VisualSceneGate.Tests());
                 results.AddRange(ReadyEscapePolicy.Tests());
+                results.AddRange(DualScheduler.Tests());
+                var leaseOutput=new Output(delegate(int key) {return false;}) {LeaseRequired=true};
+                bool leaseRejected=false;try {leaseOutput.Down(Keys.Left);}catch(InvalidOperationException) {leaseRejected=true;}
+                Check(leaseRejected && !leaseOutput.Ready() && !leaseOutput.PracticeKey.HasValue,"Inactive shared profile must not send movement");
+                leaseOutput.LeaseGranted=true;leaseOutput.Down(Keys.Left);leaseOutput.LeaseGranted=false;leaseOutput.Up(Keys.Left);
+                Check(!leaseOutput.Ready() && !leaseOutput.PracticeKey.HasValue,"Revoked lease still permits cleanup, never new key-down");
+                results.Add("PASS: inactive shared profiles reject key-down, while revoked leases retain key-release cleanup");
+                var turnOutput=new Fake();var turnController=new Controller(turnOutput);
+                turnController.Start(new Settings {UntilStopped=true,Hold=5},0,true);turnController.BeginTurn();turnController.Pause(false,0);turnController.Tick(0);
+                turnController.YieldTurn(.1);turnController.BeginTurn();turnController.Pause(false,.2);turnController.Tick(.2);
+                Check(turnController.Held==Keys.Right,"Short turns must alternate even when a hold is interrupted");turnController.YieldTurn(.3);
+                turnController.BeginTurn();turnController.Pause(false,.4);turnController.Tick(.4);Check(turnController.Held==Keys.Left,"Interrupted shared holds must remain balanced across turns");turnController.Emergency();
+                results.Add("PASS: short shared turns alternate their starting direction even when configured holds are interrupted");
                 results.AddRange(RepelPromptMatch.Tests());
                 results.AddRange(RepelRenewalPolicy.Tests());
                 bool leftShift=false, controlDown=false, rightShift=false;

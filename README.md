@@ -1,4 +1,20 @@
-# Movement Controller v1.9 — testing prototype
+# Movement Controller v2.0 — testing prototype
+
+## Two-window hunting
+
+Click **Two-window hunting mode** in the single controller, or launch `MovementController.exe --dual`. Select a different PRO window in each profile, enter its protected species, and enable input and encounter handling in each. Each profile has independent keys, timing, targets, Repel renewal, alerts and activity records.
+
+**F8** starts/stops both profiles. **F10** emergency-stops both and latches input off; use the shared Reset button before starting again. The **Turn (sec)** field controls the foreground turn duration, from 0.40 to 5 seconds, with 0.80 seconds as the default. Mouse buttons or modifiers pause input; persistent manual input stops the shared run. Both PRO windows must remain restored. Switching can visibly raise them, and normal Windows focus restrictions can stop the run.
+
+Windows input is shared, so each game gets a short foreground turn. All owned movement and Right Shift input is released before a focus request. A later stable foreground observation grants the next profile permission to send input. The profiles have no competing focus-recovery loops. Focus changes cancel pending recognition and invalidate cached identity evidence; returning to a battle requires fresh matching species reads. Escape and Repel retry limits are preserved across scheduled turns. Walking performs no periodic OCR.
+
+While one game is waiting for battle dialogue or an escape animation, it yields its turn to the other hunt. The busy game is revisited for a brief pixel-based readiness check, with no repeated name OCR while its controls are still busy. Once ready, fresh name verification precedes Run. Movement holds can be shortened by a handoff; consecutive walking turns alternate their starting direction to keep interrupted pulses balanced. [Windows can refuse normal focus requests](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow); refusal stops the run.
+
+When a target is detected, its profile stops and alerts you while the other hunt can continue. Press F8 to stop switching before catching or interacting manually. Target encounters receive no automated catching input. Closed, changed or minimized clients stop their profile; failed focus acquisition stops the shared run.
+
+The prepared local setup protects **Mimikyu** in window 1 and **Ralts** in window 2, with **Continue Repel enabled only for window 2**, a 0.30-second hold, a 0.05-second gap, and continuous operation. Process IDs in the window selectors identify the two client instances. `--prepare-dual Mimikyu Ralts <process1> <process2>` prepares that mapping and waits for F8; process IDs must be refreshed when clients restart.
+
+The visual world check supports the observed three-to-six-member party HUD layouts. Insufficient or ambiguous HUD evidence keeps input paused. See **performance-test-results.json**, **ui-test-results.txt**, and **visual-stats-window-1.json / visual-stats-window-2.json** for v2.0 verification. Each managed profile has its own bounded activity log; runtime logs and screenshots are excluded from the release ZIP.
 
 ## Continue Repel
 
@@ -22,9 +38,9 @@ Walking uses a pixel-based battle/world watcher and performs no periodic OCR. Ba
 
 The previous v1.8 build completed 12 live escapes across five species. Completed Run clicks measured **82–102 ms** after ready controls were observed (95 ms average), with 11 exact verified-caption reuses. World movement resumed in **101–199 ms**, with **zero world OCR calls**. These are v1.8 encounter measurements; v1.9 adds Repel handling without changing its ready-control escape logic.
 
-See **performance-test-results.json** for the v1.9 Repel live session, **visual-stats.json** for watcher and Repel OCR counters, and **ui-test-results.txt** for the verification summary. Escape ready-to-action timing is measured from the first observed ready controls to completed input delivery; it includes the visible click's 60 ms hold. The game can take several seconds to enable its controls during introductory dialogue, and still controls its escape animation. Neither interval can be removed by this controller.
+The v1.9 Repel release was live-tested through two repeat renewals. Its historical reports remain available under the v1.9 Git tag. The current reports cover coordinated v2.0 operation. Escape ready-to-action timing is measured from the first observed ready controls to completed input delivery; it includes the visible click's 60 ms hold. A game waiting for its next foreground turn can add latency. Dialogue and escape animations remain controlled by the game.
 
-The local suite has 50 passing check groups plus Windows OCR fixtures and an obscured-prompt rejection check. It covers Repel wording, button geometry, cancellation, retries and stale frames alongside target protection, changed identity, exact heading signatures, busy/ready/hover controls, movement release, focus recovery and emergency stop. These checks complement the live test; other resolutions and UI layouts may pause the controller.
+The local suite has 56 passing check groups plus Windows OCR fixtures and an obscured-prompt rejection check. It covers shared input ownership, release-before-switch, busy-dialogue yielding, balanced interrupted pulses, fair turns, denied focus, independent completion and global emergency stop alongside Repel cancellation/retry budgets, target protection, identity freshness, movement release and the three-member HUD. These checks complement the live test; other resolutions and UI layouts may pause the controller.
 
 ## Using it
 

@@ -119,6 +119,7 @@ namespace MovementPrototype {
         double began,nextRead,lastRead,lastClick;
         double? absentSince;
         public void Reset() {Active=Visible=false;confirmations=absentFrames=Requests=0;kind=null;began=nextRead=lastRead=lastClick=0;absentSince=null;Epoch++;}
+        public void Suspend() {Visible=false;confirmations=absentFrames=0;kind=null;absentSince=null;Epoch++;}
         public void Observe(Rectangle? bounds,double now) {
             if(!bounds.HasValue) {
                 Visible=false;
@@ -154,6 +155,10 @@ namespace MovementPrototype {
             p.Reset();p.Observe(area,10);p.Confirm(read,10.1);p.Reset();p.Observe(area,11);if(p.Confirm(read,11.1))throw new Exception("Stop/focus reset must discard old confirmation");
             p.Observe(new Rectangle(101,100,267,152),11.2);if(p.Confirm(read,11.3))throw new Exception("Changed geometry must discard old confirmation");
             if(!p.Expired(21.3) || p.Confirm(read,21.3))throw new Exception("Unrecognized modal must not remain pending forever or accept late OCR");
+            p.Reset();p.Observe(area,30);p.Confirm(read,30.1);p.Confirm(read,30.3);p.Clicked(30.3);epoch=p.Epoch;p.Suspend();
+            if(p.Visible || p.Epoch==epoch || p.Requests!=1 || !p.Active)throw new Exception("Planned handoff must revoke readings but preserve Repel retry budget");
+            p.Observe(area,31);if(p.Confirm(read,31.1) || !p.Confirm(read,31.3))throw new Exception("Returning profile needs two new Repel confirmations");
+            p.Suspend();p.Observe(area,41);if(!p.Expired(41) || p.Confirm(read,41))throw new Exception("Focus rotation must not reset the prompt deadline");
             return new List<string> {"PASS: Repel requires two recent matching prompt reads and blocks absent/stale evidence","PASS: dialog disappearance, changed geometry and stop/focus reset invalidate pending renewal","PASS: ignored Repel clicks retry only with fresh reads and stop after a bounded deadline"};
         }
     }

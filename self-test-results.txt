@@ -41,6 +41,12 @@ PASS: Run follows ready controls immediately; dialogue/busy states block input; 
 PASS: accepted failures and ignored-request time are bounded; reset and unknown controls block action
 PASS: visual Run control separates enabled gray/blue hover, busy red and absent buttons
 PASS: verified header reuse requires exact pixel identity; a changed heading forces new OCR
+PASS: dual hunts receive exclusive foreground leases, fair turns, and key release before focus changes
+PASS: unexpected focus and manual input revoke stale work; busy input and denied focus stop within bounded attempts
+PASS: a completed hunt leaves the other active; global emergency stop cancels both; duplicate windows are rejected
+PASS: busy battle dialogue yields its turn to the other hunt immediately after current recognition completes
+PASS: inactive shared profiles reject key-down, while revoked leases retain key-release cleanup
+PASS: short shared turns alternate their starting direction even when configured holds are interrupted
 PASS: Repel renewal accepts only the exact expired/use-another prompt for Repel, Super Repel or Max Repel
 PASS: purchases, releases, unrelated items, chat/extra text and ambiguous/misaligned buttons never authorize Repel clicks
 PASS: cheap dialog geometry triggers a cropped read; ordinary world colors trigger no prompt OCR

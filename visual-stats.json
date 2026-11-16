@@ -1,1 +1,22 @@
-{"visual_probes":574,"probe_mean_ms":20.891,"startup_or_refocus_world_ocr_calls":0,"battle_ocr_calls":0,"battle_appearances":0,"visual_resumes":3,"repel_prompt_ocr_calls":4,"repel_requests":2}
+{
+  "window_1": {
+    "visual_probes": 406,
+    "probe_mean_ms": 22.602,
+    "startup_or_refocus_world_ocr_calls": 0,
+    "battle_ocr_calls": 24,
+    "battle_appearances": 6,
+    "visual_resumes": 38,
+    "repel_prompt_ocr_calls": 0,
+    "repel_requests": 0
+  },
+  "window_2": {
+    "visual_probes": 610,
+    "probe_mean_ms": 24.227,
+    "startup_or_refocus_world_ocr_calls": 0,
+    "battle_ocr_calls": 0,
+    "battle_appearances": 0,
+    "visual_resumes": 67,
+    "repel_prompt_ocr_calls": 3,
+    "repel_requests": 1
+  }
+}

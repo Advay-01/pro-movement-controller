@@ -1,35 +1,61 @@
 {
-  "version": "1.9",
+  "version": "2.0",
   "tested_on": "2026-11-17",
-  "scope": "Repel renewal on visible foreground PRO; no live battle encountered in this final session.",
-  "session_start": "2026-11-17T00:32:11.1301109+05:30",
-  "session_end": "2026-11-17T00:33:05.2236830+05:30",
-  "completed_repel_renewals": 2,
-  "type": "Max Repel",
-  "prompt_detected_to_completed_yes_ms": [
-    566.0,
-    445.0
+  "window_2_started": "2026-11-17T01:38:42.3817048+05:30",
+  "session_end": "2026-11-17T01:40:34.2615418+05:30",
+  "normal_turn_seconds": 0.8,
+  "mode": "Rapid coordinated turns. Busy battle dialogue/animation yields to the walking hunt; busy visits only check readiness.",
+  "profiles": [
+    {
+      "window": 1,
+      "protected_species": "Mimikyu",
+      "continue_repel": false,
+      "recorded_escape_requests": 5,
+      "recorded_escape_species": [
+        "arbok",
+        "seedot",
+        "slowbro"
+      ],
+      "recorded_repel_renewals": 0,
+      "full_run_visual_counters": {
+        "visual_probes": 406,
+        "probe_mean_ms": 22.602,
+        "startup_or_refocus_world_ocr_calls": 0,
+        "battle_ocr_calls": 24,
+        "battle_appearances": 6,
+        "visual_resumes": 38,
+        "repel_prompt_ocr_calls": 0,
+        "repel_requests": 0
+      },
+      "emergency_stop_verified": true
+    },
+    {
+      "window": 2,
+      "protected_species": "Ralts",
+      "continue_repel": true,
+      "recorded_escape_requests": 0,
+      "recorded_escape_species": [],
+      "recorded_repel_renewals": 1,
+      "full_run_visual_counters": {
+        "visual_probes": 610,
+        "probe_mean_ms": 24.227,
+        "startup_or_refocus_world_ocr_calls": 0,
+        "battle_ocr_calls": 0,
+        "battle_appearances": 0,
+        "visual_resumes": 67,
+        "repel_prompt_ocr_calls": 3,
+        "repel_requests": 1
+      },
+      "emergency_stop_verified": true
+    }
   ],
-  "prompt_ocr_calls": 4,
-  "world_ocr_calls": 0,
-  "battle_ocr_calls": 0,
-  "visual_counters": {
-    "visual_probes": 574,
-    "probe_mean_ms": 20.891,
-    "startup_or_refocus_world_ocr_calls": 0,
-    "battle_ocr_calls": 0,
-    "battle_appearances": 0,
-    "visual_resumes": 3,
-    "repel_prompt_ocr_calls": 4,
-    "repel_requests": 2
-  },
-  "emergency_stop_verified": true,
-  "local_check_groups_passed": 50,
-  "ocr_fixtures": "Positive renewal/Yes and battle fixtures passed; supplied cursor-obscured prompt correctly rejected.",
-  "default_toggle_off_verified": true,
-  "movement_hold_seconds": 0.3,
-  "movement_gap_seconds": 0.05,
-  "protected_species": "Mimikyu",
-  "target_protection": "Existing exact/near-target and escape-gate checks passed; no target in this live session.",
-  "executable_sha256": "50C5938204AF4CDE0A9CCBF4957767A0EBDB3D4B4B48E7DF7262D1737E593E1B"
+  "observed_short_window_1_turns_ms": [
+    131.0
+  ],
+  "local_check_groups_passed": 56,
+  "focus_failure_in_retained_tail": 0,
+  "log_note": "Bounded runtime logs rotated during extended testing. Recorded event counts are retained observations; visual counters cover the full final run.",
+  "target_protection": "Per-profile exact/near-target checks and independent completion passed locally; no protected target appeared live.",
+  "limitations": "No live Ralts-window battle in this run. Live non-target escapes were exercised in window 1, and Repel renewal in window 2. Normal Windows focus restrictions apply.",
+  "executable_sha256": "E8F970197CB3852E04C32D4818F7CF0B3F67ECA34567FFD91E024EC8EE904F01"
 }
