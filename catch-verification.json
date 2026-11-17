@@ -1,7 +1,7 @@
 {
-  "version": "2.1.2",
+  "version": "2.1.3",
   "tested_on": "2026-11-17",
-  "local_check_groups": 67,
+  "local_check_groups": 68,
   "local_check_result": "passed",
   "windows_ocr_fixtures": "passed: move/PP, stock, capture, inset controls and trainer rejection; open-move priority, icon-party HUD/name/slot matching, missing HUD and overlay rejection, and first-row lead verification",
   "ui": "single profile, dual profiles and settings dialog inspected; auto-catch off by default; separate recipe settings",

@@ -16,6 +16,8 @@ namespace MovementPrototype {
     public sealed class BattleVisual {
         byte[] pixels;
         int width,height,stride;
+        int hudRight,hudFirst,hudSpacing,hudWidth,hudHeight;
+        public string HudDiagnostic {get;private set;}
         bool GrayDark(int x,int y) {
             int i=y*stride+x*4, b=pixels[i],g=pixels[i+1],r=pixels[i+2];
             return Math.Max(r,Math.Max(g,b))<=85 && Math.Max(r,Math.Max(g,b))-Math.Min(r,Math.Min(g,b))<=12;
@@ -27,6 +29,10 @@ namespace MovementPrototype {
         bool HeaderGray(int x,int y) {
             int i=y*stride+x*4,b=pixels[i],g=pixels[i+1],r=pixels[i+2];int maximum=Math.Max(r,Math.Max(g,b)),minimum=Math.Min(r,Math.Min(g,b));
             return maximum>=36 && maximum<=105 && maximum-minimum<=15;
+        }
+        bool HudGray(int x,int y) {
+            int i=y*stride+x*4,b=pixels[i],g=pixels[i+1],r=pixels[i+2];int maximum=Math.Max(r,Math.Max(g,b)),minimum=Math.Min(r,Math.Min(g,b));
+            return maximum>=18 && maximum<=105 && maximum-minimum<=32;
         }
         bool Gold(int x,int y) {
             int i=y*stride+x*4,b=pixels[i],g=pixels[i+1],r=pixels[i+2];
@@ -44,7 +50,7 @@ namespace MovementPrototype {
         }
         ChromeReading FloatingPanel() {
             int step=Math.Max(2,height/180),band=Math.Max(6,height/45);
-            for(int y=Math.Max(3,height/60);y<(int)(height*.30);y+=step) {
+            for(int y=Math.Max(3,height/60);y<(int)(height*.72);y+=step) {
                 int run=0,longest=0;
                 for(int gx=0;gx<width;gx+=3) {run=HeaderGray(gx,y) ? run+3 : 0;longest=Math.Max(longest,run);}
                 if(longest<width*.44)continue;
@@ -72,7 +78,7 @@ namespace MovementPrototype {
             }
             return null;
         }
-        ChromeReading WorldHud() {
+        ChromeReading LegacyWorldHud() {
             int rows=0,colored=0;
             for(int n=0;n<6;n++) {
                 int cy=(int)(height*(.065+n*.095)),gray=0,count=0,colors=0;
@@ -86,6 +92,46 @@ namespace MovementPrototype {
                 if(colors>=3)colored++;
             }
             return new ChromeReading {Kind=rows>=3 && colored>=2 ? ChromeKind.Clear : ChromeKind.Transition,HudRows=rows,ColorRows=colored};
+        }
+        bool HudRow(int right,int center,out bool sprite) {
+            int gray=0,total=0,color=0,middle=0,middleTotal=0;
+            int half=Math.Max(4,right/11);
+            if(center-half<0 || center+half>=height) {sprite=false;return false;}
+            for(int y=center-half;y<=center+half;y+=3)for(int x=(int)(right*.46);x<(int)(right*.94);x+=3) {total++;if(HudGray(x,y))gray++;}
+            for(int y=center-2;y<=center+2;y+=2)for(int x=(int)(right*.46);x<(int)(right*.94);x+=3) {middleTotal++;if(HudGray(x,y))middle++;}
+            for(int y=center-(int)(right*.16);y<center+(int)(right*.16);y+=3)for(int x=(int)(right*.04);x<(int)(right*.34);x+=3) {
+                if(y<0 || y>=height)continue;int i=y*stride+x*4,b=pixels[i],g=pixels[i+1],r=pixels[i+2];int max=Math.Max(r,Math.Max(g,b)),min=Math.Min(r,Math.Min(g,b));if(max>100 && max-min>35)color++;
+            }
+            sprite=color>=3;return total>0 && middleTotal>0 && (double)gray/total>=.50 && (double)middle/middleTotal>=.40;
+        }
+        ChromeReading WorldHud() {
+            if(hudRight>0 && hudWidth==width && hudHeight==height) {
+                int rows=0,colors=0;for(int n=0;n<6;n++) {bool sprite;if(HudRow(hudRight,hudFirst+n*hudSpacing,out sprite)) {rows++;if(sprite)colors++;}}
+                if(rows>=3 && colors>=2)return new ChromeReading {Kind=ChromeKind.Clear,HudRows=rows,ColorRows=colors};
+            }
+            // Recover the UI's card width from repeated gray nameplate right edges.
+            // Card spacing follows UI scale, independently of the game-window height.
+            int maximum=Math.Min(300,(int)(width*.35));var votes=new int[maximum+2];
+            for(int y=4;y<Math.Min(height*.18,150);y+=2) {
+                int began=-1;
+                for(int x=10;x<=maximum;x++) {
+                    bool gray=x<maximum && HudGray(x,y);
+                    if(gray && began<0)began=x;
+                    else if(!gray && began>=0) {if(x-began>=22 && x>=65)votes[x/4*4]++;began=-1;}
+                }
+            }
+            var edges=new List<int>();for(int i=64;i<maximum;i+=4)if(votes[i]>=2)edges.Add(i);
+            edges.Sort((a,b)=>votes[b].CompareTo(votes[a]));if(edges.Count>5)edges.RemoveRange(5,edges.Count-5);
+            HudDiagnostic="edges="+String.Join(",",edges);
+            ChromeReading best=LegacyWorldHud();
+            if(best.Kind==ChromeKind.Clear)return best;
+            foreach(int edge in edges)for(int spacing=(int)(edge*.32);spacing<=edge*.45;spacing+=2)for(int first=(int)(edge*.15);first<=edge*.39;first+=3) {
+                int rows=0,sprites=0;
+                for(int n=0;n<6;n++) {bool sprite;bool gray=HudRow(edge,first+n*spacing,out sprite);if(!gray)break;rows++;if(sprite)sprites++;}
+                if(rows>=3 && sprites>=2) {hudRight=edge;hudFirst=first;hudSpacing=spacing;hudWidth=width;hudHeight=height;HudDiagnostic+="; matched="+edge+","+first+","+spacing;return new ChromeReading {Kind=ChromeKind.Clear,HudRows=rows,ColorRows=sprites};}
+                if(rows>best.HudRows)best=new ChromeReading {Kind=ChromeKind.Transition,HudRows=rows,ColorRows=sprites};
+            }
+            return best;
         }
         public ChromeReading Detect(Bitmap image) {
             width=image.Width; height=image.Height; stride=width*4;
@@ -201,7 +247,15 @@ namespace MovementPrototype {
                 g.FillRectangle(Brushes.White,415,82,110,145);
                 if(detector.Detect(image).Kind!=ChromeKind.Transition)throw new Exception("Inset battle header with an uncertain menu must never authorize walking");
             }
-            return new List<string> {"PASS: visual watcher distinguishes battle chrome, world/HUD decoration, dark world and blank/login backgrounds","PASS: walking and startup use visual HUD confirmation without OCR; battle arms recognition; exit resumes after 160ms; focus resets trust","PASS: no opponent OCR runs while walking, during uncertain transitions, or while an accepted escape is settling","PASS: inset battle geometry overrides visible world HUD; uncertain battle menus pause rather than authorize movement"};
+            foreach(var size in new Size[] {new Size(1150,864),new Size(1150,600),new Size(1600,900)})using(var image=new Bitmap(size.Width,size.Height))using(var g=Graphics.FromImage(image))using(var fill=new SolidBrush(Color.FromArgb(45,45,49))) {
+                g.Clear(Color.FromArgb(32,78,45));
+                for(int n=0;n<4;n++) {int cy=38+n*56;g.FillRectangle(fill,48,cy-22,96,44);g.FillEllipse(Brushes.OrangeRed,8,cy-20,35,40);g.FillRectangle(Brushes.LimeGreen,55,cy+14,80,3);}g.Flush();
+                if(detector.Detect(image).Kind!=ChromeKind.Clear)throw new Exception("Four-member fixed-scale HUD must be recognized independently of window height: "+size);
+                if(detector.Detect(image).Kind!=ChromeKind.Clear)throw new Exception("Cached adaptive HUD layout must remain usable");
+                g.Clear(Color.FromArgb(32,78,45));for(int n=0;n<2;n++) {int cy=38+n*56;g.FillRectangle(fill,48,cy-22,96,44);g.FillEllipse(Brushes.OrangeRed,8,cy-20,35,40);}g.Flush();
+                if(detector.Detect(image).Kind!=ChromeKind.Transition)throw new Exception("A cached HUD must not trust missing party evidence");
+            }
+            return new List<string> {"PASS: visual watcher distinguishes battle chrome, world/HUD decoration, dark world and blank/login backgrounds","PASS: walking and startup use visual HUD confirmation without OCR; battle arms recognition; exit resumes after 160ms; focus resets trust","PASS: no opponent OCR runs while walking, during uncertain transitions, or while an accepted escape is settling","PASS: inset battle geometry overrides visible world HUD; uncertain battle menus pause rather than authorize movement","PASS: fixed-scale four-member HUD works across resized game windows; cached layout still rejects missing party evidence"};
         }
         static void DrawHud(Graphics g,int count=6) {
             using(var fill=new SolidBrush(Color.FromArgb(45,45,45)))for(int n=0;n<count;n++) {int cy=(int)(480*(.065+n*.095));g.FillRectangle(fill,40,cy-14,75,28);g.FillEllipse(Brushes.OrangeRed,10,cy-12,25,24);}

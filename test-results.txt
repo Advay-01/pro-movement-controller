@@ -38,6 +38,7 @@ PASS: visual watcher distinguishes battle chrome, world/HUD decoration, dark wor
 PASS: walking and startup use visual HUD confirmation without OCR; battle arms recognition; exit resumes after 160ms; focus resets trust
 PASS: no opponent OCR runs while walking, during uncertain transitions, or while an accepted escape is settling
 PASS: inset battle geometry overrides visible world HUD; uncertain battle menus pause rather than authorize movement
+PASS: fixed-scale four-member HUD works across resized game windows; cached layout still rejects missing party evidence
 PASS: Run follows ready controls immediately; dialogue/busy states block input; ignored clicks retry without the old four-second wait
 PASS: accepted failures and ignored-request time are bounded; reset and unknown controls block action
 PASS: visual Run control separates enabled gray/blue hover, busy red and absent buttons

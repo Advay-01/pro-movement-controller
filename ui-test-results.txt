@@ -1,6 +1,6 @@
-PASS: 67 local check groups; Windows OCR fixtures cover move/PP, stock, capture, inset controls and trainer rejection.
-PASS: open-move priority with persistent main buttons; icon-party selection requires a complete HUD, matching name/slot and consistent icon count; missing HUD members and covering overlays reject selection.
-PASS: expected leading Pokemon must be the first HUD row, rather than any party member.
-UI: existing per-profile catching settings and default-off toggle unchanged; version title updated to v2.1.2.
-LIVE: Fight and Pokemon menus inspected in a wild Seedot battle. No move, switch or ball submitted. Manual input interrupted Items inspection; battle ended before that check finished.
-LIMIT: live move execution, switching and capture are unverified. Supervise the first configured catch.
+PASS: 68 local check groups, including fixed-scale HUDs across resized windows and rejection of missing HUD evidence. Windows OCR fixtures pass.
+LIVE REPRODUCTION: world map at 1152x864 was classified Transition with one HUD evidence row; movement stayed paused.
+LIVE FIX: read-only check classified Clear. Character/camera movement was observed during a 39.014-second run, then F8 stopped it.
+LIVE: one Max Repel renewal completed; movement resumed in 192 ms. Initial world confirmation took 148 ms. Zero walking OCR calls; 408 probes, 38.283 ms mean including capture.
+Auto-catch was off; no battle or capture occurred. Catch recipe files are preserved separately from the distribution ZIP.
+See movement-pause-verification.json for this test. Prior catch-menu validation remains documented in catch-verification.json.

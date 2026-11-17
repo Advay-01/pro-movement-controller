@@ -1,5 +1,11 @@
 # Changes
 
+## v2.1.3
+
+Fixes movement remaining paused on the world map. Party cards keep their UI scale while the game window changes size; the former detector sampled incorrect vertical positions. HUD detection now locates repeated nameplate edges, checks actual card spacing and colours, and caches a revalidated layout. Battle-header checks cover panels lower in the window. Read-only scene checks record scene/HUD/window diagnostics.
+
+The failure was reproduced in the live 1152×864 client. The fix completed a 39-second movement test with zero walking OCR, one automatic Max Repel renewal, resumed movement and successful F8 stop. No battle/capture occurred. Local validation includes 68 groups and Windows OCR fixtures.
+
 ## v2.1.2
 
 Fixes submenu priority and party selection after inspecting Fight and Pokémon in a wild Seedot battle. Persistent main command buttons no longer hide an open move list. The icon-only party grid requires matching HUD names, the configured slot and a consistent visible icon count; missing labels and covering overlays block selection. Leading-Pokémon verification is restricted to the first party row, and caption padding keeps the first log line in the log crop.
