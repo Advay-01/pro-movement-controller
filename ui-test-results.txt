@@ -1,5 +1,6 @@
-PASS: 67 local check groups, including inset battle geometry, catching and bounded dual-window reading.
-PASS: Windows OCR fixtures for inset commands, original client Run/Items coordinates, own caption, scoped capture text and trainer rejection; existing move/PP, stock, encounter and Repel cases pass.
-UI: per-profile catching settings were inspected in v2.1; controls and default-off behavior are unchanged by v2.1.1 apart from the version title.
-LIVE INSPECTION: Seedot battle screen exposed the inset layout mismatch. Further menu inspection was interrupted by manual input and a later trainer battle.
-LIMIT: no move, party switch, ball or live catch was submitted/verified. Inspect an untouched wild battle before live catching.
+PASS: 67 local check groups; Windows OCR fixtures cover move/PP, stock, capture, inset controls and trainer rejection.
+PASS: open-move priority with persistent main buttons; icon-party selection requires a complete HUD, matching name/slot and consistent icon count; missing HUD members and covering overlays reject selection.
+PASS: expected leading Pokemon must be the first HUD row, rather than any party member.
+UI: existing per-profile catching settings and default-off toggle unchanged; version title updated to v2.1.2.
+LIVE: Fight and Pokemon menus inspected in a wild Seedot battle. No move, switch or ball submitted. Manual input interrupted Items inspection; battle ended before that check finished.
+LIMIT: live move execution, switching and capture are unverified. Supervise the first configured catch.

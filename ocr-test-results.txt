@@ -3,4 +3,4 @@ AdvayO VS. Wild Seedot
 Fight
 Items
 Local Trade
-PASS: Windows OCR catch fixtures confirm exact target/catcher, move/PP anchors, ball stock and capture text. Inset-panel commands, Run/Items coordinate mapping and scoped battle-log capture text pass; trainer battles authorize no wild-catching control. No game input sent.
+PASS: Windows OCR covers targets, catcher, move/PP, stock, capture log, inset Run/Items coordinates and trainer rejection. Open moves override persistent commands; icon-party selection requires matching HUD name, slot and visible icon count, and rejects a missing HUD member. No game input sent.

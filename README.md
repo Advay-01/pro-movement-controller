@@ -1,4 +1,6 @@
-# Movement Controller v2.1.1 — testing prototype
+# Movement Controller v2.1.2 — testing prototype
+
+The v2.1.2 menu patch follows a read-only Fight and Pokémon inspection in a wild Seedot battle. Moves and party views take precedence over the persistent main buttons. The observed icon-only party grid is matched to the complete left-side party names and configured slot; missing labels, unexpected icon counts or covering overlays authorize no selection. The optional leading-Pokémon check uses the first HUD row rather than any matching party member. Caption padding no longer cuts into the first battle-log line. No attack, switch or ball was submitted; the battle ended before Items inspection could finish. Live move execution and capture remain unverified.
 
 The v2.1.1 layout patch recognizes the smaller, translated battle panel observed in the live client. Its command, own-Pokémon and battle-log regions follow that panel rather than fixed screen percentages. This also prevents the visible party HUD behind a battle from being treated as walking permission. Unknown panel/menu evidence stays paused. A trainer caption cannot authorize wild-catching controls or validate an old capture message. The read-only Seedot inspection was interrupted by manual input and a later trainer battle; move selection, party switching and live capture remain unverified.
 

@@ -364,7 +364,7 @@ namespace MovementPrototype {
             output.LeaseRequired=managedMode;
             controller = new Controller(output);
             output.RunKey=runKey;
-            Text="Movement Controller v2.1.1 — testing prototype";
+            Text="Movement Controller v2.1.2 — testing prototype";
             ClientSize=new Size(630,900); MinimumSize=new Size(650,780);
             Font=new Font("Segoe UI",10); StartPosition=FormStartPosition.CenterScreen;
             var flow=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false, Padding=new Padding(22), AutoScroll=true };

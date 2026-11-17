@@ -67,7 +67,7 @@ namespace MovementPrototype {
                     // A matching header without its black log panel is uncertain, never a clear world.
                     bool log=total>0 && (double)dark/total>=.72;
                     var box=new Rectangle(left,top,panelWidth,Math.Min(height-top,bottom-top+(int)(panelWidth*.53)));
-                    return new ChromeReading {Kind=log ? ChromeKind.Battle : ChromeKind.Transition,GoldX=center,BattleBox=box,Header=new Rectangle(left,Math.Max(0,top-2),panelWidth,Math.Min(height-top,bottom-top+12))};
+                    return new ChromeReading {Kind=log ? ChromeKind.Battle : ChromeKind.Transition,GoldX=center,BattleBox=box,Header=new Rectangle(left,Math.Max(0,top-2),panelWidth,Math.Min(height-top,bottom-top+5))};
                 }
             }
             return null;

@@ -1,5 +1,11 @@
 # Changes
 
+## v2.1.2
+
+Fixes submenu priority and party selection after inspecting Fight and Pokémon in a wild Seedot battle. Persistent main command buttons no longer hide an open move list. The icon-only party grid requires matching HUD names, the configured slot and a consistent visible icon count; missing labels and covering overlays block selection. Leading-Pokémon verification is restricted to the first party row, and caption padding keeps the first log line in the log crop.
+
+67 local groups and expanded Windows OCR fixtures pass. No attack, switch or ball was submitted. The wild battle ended before live Items inspection finished; live move execution and capture are still unverified.
+
 ## v2.1.1
 
 Fixes recognition of the inset battle panel seen in the current client. Battle controls, the active Pokémon caption and battle log now follow the detected panel bounds. Uncertain headers stay paused even when the world party HUD is visible behind the battle. Run/Items OCR maps panel coordinates back to the game client. Catch commands require the two-row grid, and trainer captions reject wild catching and stale catch text.

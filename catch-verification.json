@@ -1,11 +1,11 @@
 {
-  "version": "2.1.1",
+  "version": "2.1.2",
   "tested_on": "2026-11-17",
   "local_check_groups": 67,
   "local_check_result": "passed",
-  "windows_ocr_fixtures": "passed: encounter/Repel; catcher, move/PP, ball stock and capture text; inset panel commands, Run/Items coordinate mapping, scoped battle log and trainer rejection",
+  "windows_ocr_fixtures": "passed: move/PP, stock, capture, inset controls and trainer rejection; open-move priority, icon-party HUD/name/slot matching, missing HUD and overlay rejection, and first-row lead verification",
   "ui": "single profile, dual profiles and settings dialog inspected; auto-catch off by default; separate recipe settings",
-  "live_inspection": "Seedot battle screen exposed an inset-panel layout mismatch. Further inspection was interrupted by manual input and a trainer battle. Prior backpack behavior was inspected outside battle. No move, switch or ball submitted",
+  "live_inspection": "Fight and Pokemon menus inspected in a wild Seedot battle without selecting a move or party member. Persistent buttons and icon-only party grid confirmed. Manual input interrupted Items inspection and the battle ended. No attack, switch or ball submitted",
   "live_target_capture_verified": false,
   "required_setup": "Configure and test the catching recipe; leave the bag on Balls with the chosen ball visible; supervise the first capture",
   "limits": "Configured move counts rather than exact HP measurement; no bag scrolling, PP replenishment or status reapplication; unknown layouts/wording stop for manual attention"

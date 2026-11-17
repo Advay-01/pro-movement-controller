@@ -159,7 +159,7 @@ namespace MovementPrototype {
             var bagArea=new Rectangle((int)(image.Width*.20),(int)(image.Height*.18),(int)(image.Width*.58),(int)(image.Height*.48));
             var ownArea=BattleRegions.Own(chrome,image.Size);
             var logArea=BattleRegions.Log(chrome,image.Size);
-            var leadArea=new Rectangle(0,0,(int)(image.Width*.22),(int)(image.Height*.13));
+            var leadArea=new Rectangle(0,0,(int)(image.Width*.15),(int)(image.Height*.53));
             var regions=await Task.WhenAll(ReadCatchRegion(image,headerArea),ReadCatchRegion(image,menuArea),ReadCatchRegion(image,ownArea),ReadCatchRegion(image,logArea),ReadCatchRegion(image,leadArea),ReadCatchRegion(image,bagArea));
             var stockArea=CatchVision.StockArea(regions[5],config.Ball,image.Size);
             if(stockArea.HasValue) {var count=await ReadCatchRegion(image,stockArea.Value);regions[5].Rows.AddRange(count.Rows);regions[5].Text+="\n"+count.Text;}
