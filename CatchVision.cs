@@ -68,7 +68,8 @@ namespace MovementPrototype {
             frame.LeadPokemon=String.IsNullOrWhiteSpace(config.ExpectedLead) ? null : Has(lead.Text,config.ExpectedLead) ? config.ExpectedLead : null;
             frame.Message=log.Text;frame.MessageKey=log.Text;
             string target=Regex.Escape(expected ?? "");
-            bool success=!String.IsNullOrEmpty(expected) && Regex.IsMatch(log.Text ?? "",@"(?:^|\n)\s*(?:Gotcha[!.,]?\s*)?(?:(?:Wild\s+)?"+target+@"\s+(?:was|has been)\s+caught[!.]?|You\s+(?:have\s+)?caught\s+(?:a\s+)?"+target+@"[!.]?)\s*(?:$|\n)",RegexOptions.IgnoreCase);
+            bool trainer=Regex.IsMatch(header.Text ?? "",@"\bVS\b",RegexOptions.IgnoreCase) && !Regex.IsMatch(header.Text ?? "",@"\bWild\b",RegexOptions.IgnoreCase);
+            bool success=!trainer && !String.IsNullOrEmpty(expected) && Regex.IsMatch(log.Text ?? "",@"(?:^|\n)\s*(?:Gotcha[!.,]?\s*)?(?:(?:Wild\s+)?"+target+@"\s+(?:was|has been)\s+caught[!.]?|You\s+(?:have\s+)?caught\s+(?:a\s+)?"+target+@"[!.]?)\s*(?:$|\n)",RegexOptions.IgnoreCase);
             if(success) {frame.Success=true;frame.Opponent=expected;frame.View=CatchView.Success;}
             if(Regex.IsMatch(log.Text ?? "",@"\b(fainted|no pp left|not enough pp|doesn.t affect|had no effect|no effect on|no .+balls left|can.t use that|cannot use that|attack missed|ran away|fled from battle)\b",RegexOptions.IgnoreCase)) {frame.Failure=true;frame.FailureReason="battle reported a failed action, fainting or escape";}
             // The backpack can overlay the battle without hiding the command buttons.
@@ -77,8 +78,10 @@ namespace MovementPrototype {
                 var quantity=Stock(ballRegion,ball);int stock=quantity==null ? -1 : Quantity(quantity.Text);
                 frame.View=CatchView.BallList;Put(frame,CatchActionKind.UseBall,Control(ball,config.Ball,0,stock));return frame;
             }
-            var fight=Unique(menu,"Fight");var pokemon=Unique(menu,"Pokemon") ?? Unique(menu,"Pokémon");var items=Unique(menu,"Items");var run=Unique(menu,"Run");
+            var fight=Unique(menu,"Fight");var pokemon=Unique(menu,"Pokemon") ?? Unique(menu,"Pokémon") ?? Unique(menu,"P kemon") ?? Unique(menu,"okemon");var items=Unique(menu,"Items");var run=Unique(menu,"Run");
             if(frame.Wild && fight!=null && pokemon!=null && items!=null && run!=null) {
+                var f=Center(fight.Bounds);var p=Center(pokemon.Bounds);var i=Center(items.Bounds);var r=Center(run.Bounds);
+                if(p.X<=f.X+image.Width*.025 || i.Y<=f.Y+image.Height*.025 || Math.Abs(f.X-i.X)>image.Width*.035 || Math.Abs(p.X-r.X)>image.Width*.035 || Math.Abs(f.Y-p.Y)>image.Height*.025 || Math.Abs(i.Y-r.Y)>image.Height*.025)return frame;
                 var state=BattleControlReady.Read(image,Center(run.Bounds),Center(items.Bounds));
                 frame.Ready=state==ControlReady.Ready;frame.View=frame.Ready ? CatchView.Commands : state==ControlReady.Busy ? CatchView.Busy : CatchView.Unknown;
                 Put(frame,CatchActionKind.OpenFight,Control(fight,"Fight"));Put(frame,CatchActionKind.OpenParty,Control(pokemon,"Pokemon"));Put(frame,CatchActionKind.OpenBag,Control(items,"Items"));

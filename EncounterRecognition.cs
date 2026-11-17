@@ -33,8 +33,8 @@ namespace MovementPrototype {
             using(var g=Graphics.FromImage(result)) {g.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;g.DrawImage(image,new Rectangle(0,0,result.Width,result.Height),area,GraphicsUnit.Pixel);}
             return result;
         }
-        public static async Task<RunButtonCandidate> ReadBattle(Bitmap image,Rectangle heading,bool locateButton) {
-            if(locateButton)return await FindRunButton(image,heading);
+        public static async Task<RunButtonCandidate> ReadBattle(Bitmap image,Rectangle heading,bool locateButton,Rectangle? menuBounds=null) {
+            if(locateButton)return await FindRunButton(image,heading,menuBounds);
             using(var crop=EnlargeRectangle(image,heading)) {
                 var result=await Recognize(crop);
                 return new RunButtonCandidate {Header=TextOf(result),Controls="",IdentityBounds=CaptionBounds(result,heading,image.Size)};
@@ -110,9 +110,9 @@ namespace MovementPrototype {
                 }
             }
         }
-        public static async Task<RunButtonCandidate> FindRunButton(Bitmap image,Rectangle? headingBounds=null) {
+        public static async Task<RunButtonCandidate> FindRunButton(Bitmap image,Rectangle? headingBounds=null,Rectangle? menuBounds=null) {
             using(var header=headingBounds.HasValue ? EnlargeRectangle(image,headingBounds.Value) : EnlargeRegion(image,.14,0,.72,.28))
-            using(var buttons=EnlargeRegion(image,.72,.50,.28,.43)) {
+            using(var buttons=menuBounds.HasValue ? EnlargeRectangle(image,menuBounds.Value) : EnlargeRegion(image,.72,.50,.28,.43)) {
                 var heading=Recognize(header); var recognition=Recognize(buttons);
                 await Task.WhenAll(heading,recognition);
                 var words=new List<ButtonWord>(); var lines=new List<string>();
@@ -127,8 +127,8 @@ namespace MovementPrototype {
                 var items=point.HasValue ? RunButtonMatch.ItemsAnchor(words,point.Value,buttons.Width,buttons.Height) : null;
                 return new RunButtonCandidate {
                     Header=TextOf(heading.Result), Controls=String.Join("\n",lines),IdentityBounds=CaptionBounds(heading.Result,headingBounds ?? new Rectangle((int)(image.Width*.14),0,(int)(image.Width*.72),(int)(image.Height*.28)),image.Size),
-                    ClientPoint=point.HasValue ? (Point?)new Point((int)(image.Width*.72)+ (int)(point.Value.X/3),(int)(image.Height*.50)+(int)(point.Value.Y/3)) : null,
-                    ItemsPoint=items.HasValue ? (Point?)new Point((int)(image.Width*.72)+(int)(items.Value.X/3),(int)(image.Height*.50)+(int)(items.Value.Y/3)) : null
+                    ClientPoint=point.HasValue ? (Point?)new Point((menuBounds.HasValue ? menuBounds.Value.Left : (int)(image.Width*.72))+ (int)(point.Value.X/3),(menuBounds.HasValue ? menuBounds.Value.Top : (int)(image.Height*.50))+(int)(point.Value.Y/3)) : null,
+                    ItemsPoint=items.HasValue ? (Point?)new Point((menuBounds.HasValue ? menuBounds.Value.Left : (int)(image.Width*.72))+(int)(items.Value.X/3),(menuBounds.HasValue ? menuBounds.Value.Top : (int)(image.Height*.50))+(int)(items.Value.Y/3)) : null
                 };
             }
         }
@@ -154,11 +154,11 @@ namespace MovementPrototype {
             }
         }
         public static async Task<CatchFrame> ReadCatch(Bitmap image,ChromeReading chrome,CatchConfig config,string species,string move,int slot,long id,double at) {
-            var headerArea=chrome.Kind==ChromeKind.Battle ? chrome.Header : new Rectangle(0,0,image.Width,(int)(image.Height*.30));
-            var menuArea=new Rectangle((int)(image.Width*.72),(int)(image.Height*.13),(int)(image.Width*.28),(int)(image.Height*.80));
+            var headerArea=chrome.Kind==ChromeKind.Battle || chrome.BattleBox.HasValue ? chrome.Header : new Rectangle(0,0,image.Width,(int)(image.Height*.30));
+            var menuArea=BattleRegions.Menu(chrome,image.Size);
             var bagArea=new Rectangle((int)(image.Width*.20),(int)(image.Height*.18),(int)(image.Width*.58),(int)(image.Height*.48));
-            var ownArea=new Rectangle((int)(image.Width*.40),(int)(image.Height*.45),(int)(image.Width*.33),(int)(image.Height*.34));
-            var logArea=new Rectangle(0,(int)(image.Height*.70),(int)(image.Width*.63),(int)(image.Height*.29));
+            var ownArea=BattleRegions.Own(chrome,image.Size);
+            var logArea=BattleRegions.Log(chrome,image.Size);
             var leadArea=new Rectangle(0,0,(int)(image.Width*.22),(int)(image.Height*.13));
             var regions=await Task.WhenAll(ReadCatchRegion(image,headerArea),ReadCatchRegion(image,menuArea),ReadCatchRegion(image,ownArea),ReadCatchRegion(image,logArea),ReadCatchRegion(image,leadArea),ReadCatchRegion(image,bagArea));
             var stockArea=CatchVision.StockArea(regions[5],config.Ball,image.Size);

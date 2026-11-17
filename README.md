@@ -1,4 +1,6 @@
-# Movement Controller v2.1 — testing prototype
+# Movement Controller v2.1.1 — testing prototype
+
+The v2.1.1 layout patch recognizes the smaller, translated battle panel observed in the live client. Its command, own-Pokémon and battle-log regions follow that panel rather than fixed screen percentages. This also prevents the visible party HUD behind a battle from being treated as walking permission. Unknown panel/menu evidence stays paused. A trainer caption cannot authorize wild-catching controls or validate an old capture message. The read-only Seedot inspection was interrupted by manual input and a later trainer battle; move selection, party switching and live capture remain unverified.
 
 ## Optional auto-catch settings
 
@@ -14,7 +16,7 @@ Scheduled dual-window handoffs invalidate stale readings and preserve completed 
 
 **Check catch screen (no input)** reports the recognized view, species, catcher and controls through **Show last screen reading**. Per-profile files `catch-settings.json`, `catch-settings-window-1.json` and `catch-settings-window-2.json` stay local and are excluded from Git and release ZIPs.
 
-Validation: 66 local check groups plus Windows OCR fixtures cover the workflow, wrong species, move order/PP, stock/budgets, capture confirmation, persistence, lease/epoch cancellation, dual turn allowance and second-screen validation. The settings dialog and both profile modes were inspected, and the backpack was inspected without throwing a ball. **A live target capture has not been verified.** Use the read-only diagnostic and supervise the first configured capture. Other layouts or wording may stop for manual handling. Historical escape timings below describe earlier releases, not catching performance.
+Validation: 67 local check groups plus Windows OCR fixtures cover the workflow, wrong species, move order/PP, stock/budgets, capture confirmation, persistence, lease/epoch cancellation, dual turn allowance and second-screen validation. The settings dialog and both profile modes were inspected, and the backpack was inspected without throwing a ball. **A live target capture has not been verified.** Use the read-only diagnostic and supervise the first configured capture. Other layouts or wording may stop for manual handling. Historical escape timings below describe earlier releases, not catching performance.
 
 ## Two-window hunting
 

@@ -1,5 +1,11 @@
 # Changes
 
+## v2.1.1
+
+Fixes recognition of the inset battle panel seen in the current client. Battle controls, the active Pokémon caption and battle log now follow the detected panel bounds. Uncertain headers stay paused even when the world party HUD is visible behind the battle. Run/Items OCR maps panel coordinates back to the game client. Catch commands require the two-row grid, and trainer captions reject wild catching and stale catch text.
+
+67 local groups and Windows OCR fixtures cover the layout fix, control mapping, scoped capture messages and trainer rejection. The live Seedot screen exposed the layout mismatch; inspection was interrupted by manual input and a later trainer battle. No move, switch or ball was submitted; live catching remains unverified.
+
 ## v2.1
 
 Adds optional, per-profile **Catch settings** and **Auto-catch exact targets**. Choose a catcher/party slot, ordered preparation and False Swipe turns, ball/ball limit and whether to resume after confirmed capture. Recipes persist independently; auto-catch stays off at launch. A read-only catching diagnostic is included.

@@ -1,7 +1,5 @@
-PASS: 66 local check groups, including catch flow and bounded dual-window read allowance.
-PASS: Windows OCR fixtures for exact target/catcher, four move/PP anchors, ball label/stock, capture text, encounter/Repel recognition.
-PASS: single and dual UI smoke checks; auto-catch off on launch, settings enabled in each profile; global F8/F10 registered in their owning controller.
-PASS: settings dialog inspected; catcher/slot, ordered steps, ball/budget and resume editable; Save/Cancel stay visible.
-LIVE INSPECTION: backpack Balls pocket and immediate item-use click behavior outside battle. No ball was thrown and no attack was selected.
-LIMIT: live target capture not verified. Configure the real team and supervise the first catch; unsupported menus/text stop for manual handling.
-Historical v2.0 escape timings are retained in that release and are not catch-performance measurements.
+PASS: 67 local check groups, including inset battle geometry, catching and bounded dual-window reading.
+PASS: Windows OCR fixtures for inset commands, original client Run/Items coordinates, own caption, scoped capture text and trainer rejection; existing move/PP, stock, encounter and Repel cases pass.
+UI: per-profile catching settings were inspected in v2.1; controls and default-off behavior are unchanged by v2.1.1 apart from the version title.
+LIVE INSPECTION: Seedot battle screen exposed the inset layout mismatch. Further menu inspection was interrupted by manual input and a later trainer battle.
+LIMIT: no move, party switch, ball or live catch was submitted/verified. Inspect an untouched wild battle before live catching.

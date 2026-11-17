@@ -364,7 +364,7 @@ namespace MovementPrototype {
             output.LeaseRequired=managedMode;
             controller = new Controller(output);
             output.RunKey=runKey;
-            Text="Movement Controller v2.1 — testing prototype";
+            Text="Movement Controller v2.1.1 — testing prototype";
             ClientSize=new Size(630,900); MinimumSize=new Size(650,780);
             Font=new Font("Segoe UI",10); StartPosition=FormStartPosition.CenterScreen;
             var flow=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false, Padding=new Padding(22), AutoScroll=true };
@@ -795,7 +795,7 @@ namespace MovementPrototype {
                         if(chrome.Kind!=ChromeKind.Battle)return;
                         battleOcrCalls++;
                         bool reuse=SameControls(image,chrome);
-                        candidate=await LocalOcr.ReadBattle(image,chrome.Header,stableCount>=1 && !reuse);
+                        candidate=await LocalOcr.ReadBattle(image,chrome.Header,stableCount>=1 && !reuse,chrome.BattleBox.HasValue ? (Rectangle?)BattleRegions.Menu(chrome,image.Size) : null);
                         headingArea=candidate.IdentityBounds ?? chrome.Header;
                         headerSignature=VerifiedHeader.Signature(image,headingArea.Value);
                         if(reuse) {candidate.ClientPoint=trackedRun;candidate.ItemsPoint=trackedItems;}

@@ -11,6 +11,7 @@ namespace MovementPrototype {
         public Rectangle Header;
         public int HudRows,ColorRows;
         public int GoldX;
+        public Rectangle? BattleBox;
     }
     public sealed class BattleVisual {
         byte[] pixels;
@@ -22,6 +23,10 @@ namespace MovementPrototype {
         bool Black(int x,int y,int maximum) {
             int i=y*stride+x*4;
             return pixels[i]<=maximum && pixels[i+1]<=maximum && pixels[i+2]<=maximum;
+        }
+        bool HeaderGray(int x,int y) {
+            int i=y*stride+x*4,b=pixels[i],g=pixels[i+1],r=pixels[i+2];int maximum=Math.Max(r,Math.Max(g,b)),minimum=Math.Min(r,Math.Min(g,b));
+            return maximum>=36 && maximum<=105 && maximum-minimum<=15;
         }
         bool Gold(int x,int y) {
             int i=y*stride+x*4,b=pixels[i],g=pixels[i+1],r=pixels[i+2];
@@ -36,6 +41,36 @@ namespace MovementPrototype {
             for(int y=row+(int)(height*.08);y<Math.Min(height,row+(int)(height*.46));y+=Math.Max(2,height/30))
                 for(int x=(int)(width*.82);x<(int)(width*.97);x+=Math.Max(2,width/40)) { total++; if(PanelBlack(x,y))dark++; }
             return total==0 ? 0 : (double)dark/total;
+        }
+        ChromeReading FloatingPanel() {
+            int step=Math.Max(2,height/180),band=Math.Max(6,height/45);
+            for(int y=Math.Max(3,height/60);y<(int)(height*.30);y+=step) {
+                int run=0,longest=0;
+                for(int gx=0;gx<width;gx+=3) {run=HeaderGray(gx,y) ? run+3 : 0;longest=Math.Max(longest,run);}
+                if(longest<width*.44)continue;
+                for(int x=(int)(width*.15);x<(int)(width*.78);x+=3) {
+                    int count=0,sum=0;
+                    for(int yy=Math.Max(0,y-band);yy<Math.Min(height,y+band);yy+=2)for(int xx=x;xx<Math.Min(width,x+24);xx+=2)if(Gold(xx,yy)) {count++;sum+=xx;}
+                    if(count<Math.Max(8,width/100) || !HeaderGray(sum/count,y))continue;
+                    int center=sum/count,left=center,right=center,miss=0;
+                    for(int xx=center;xx>=0;xx--) {miss=HeaderGray(xx,y) ? 0 : miss+1;if(miss>=4) {left=xx+4;break;}left=xx;}
+                    miss=0;for(int xx=center;xx<width;xx++) {miss=HeaderGray(xx,y) ? 0 : miss+1;if(miss>=4) {right=xx-3;break;}right=xx+1;}
+                    int panelWidth=right-left;
+                    if(panelWidth<width*.45 || panelWidth>width*.92)continue;
+                    int edge=right-Math.Max(6,panelWidth/70),top=y,bottom=y;
+                    while(top>0 && HeaderGray(edge,top-1))top--;
+                    while(bottom<height-1 && HeaderGray(edge,bottom+1))bottom++;
+                    if(bottom-top<height*.015 || bottom-top>height*.09)continue;
+                    int dark=0,total=0;
+                    for(int yy=bottom+Math.Max(5,panelWidth/60);yy<Math.Min(height,bottom+(int)(panelWidth*.30));yy+=Math.Max(3,height/60))
+                        for(int xx=left+(int)(panelWidth*.77);xx<left+(int)(panelWidth*.97);xx+=Math.Max(3,width/90)) {total++;if(PanelBlack(xx,yy))dark++;}
+                    // A matching header without its black log panel is uncertain, never a clear world.
+                    bool log=total>0 && (double)dark/total>=.72;
+                    var box=new Rectangle(left,top,panelWidth,Math.Min(height-top,bottom-top+(int)(panelWidth*.53)));
+                    return new ChromeReading {Kind=log ? ChromeKind.Battle : ChromeKind.Transition,GoldX=center,BattleBox=box,Header=new Rectangle(left,Math.Max(0,top-2),panelWidth,Math.Min(height-top,bottom-top+12))};
+                }
+            }
+            return null;
         }
         ChromeReading WorldHud() {
             int rows=0,colored=0;
@@ -77,8 +112,24 @@ namespace MovementPrototype {
                 int top=Math.Max(0,y-band), bottom=Math.Min(height,y+Math.Max(28,(int)(height*.075)));
                 return new ChromeReading {Kind=ChromeKind.Battle,GoldX=sumX/gold,Header=new Rectangle((int)(width*.10),top,(int)(width*.86),Math.Max(1,bottom-top))};
             }
+            var floating=FloatingPanel();if(floating!=null)return floating;
             if(PanelFraction((int)(height*.06))>.92) return new ChromeReading {Kind=ChromeKind.Transition};
             return WorldHud();
+        }
+    }
+    public static class BattleRegions {
+        static Rectangle Clip(Rectangle area,Size image) {area.Intersect(new Rectangle(Point.Empty,image));return area;}
+        public static Rectangle Menu(ChromeReading chrome,Size image) {
+            if(!chrome.BattleBox.HasValue)return new Rectangle((int)(image.Width*.72),(int)(image.Height*.13),(int)(image.Width*.28),(int)(image.Height*.80));
+            var b=chrome.BattleBox.Value;return Clip(Rectangle.FromLTRB(b.Left+(int)(b.Width*.73),chrome.Header.Bottom,b.Right,b.Bottom+(int)(b.Width*.05)),image);
+        }
+        public static Rectangle Own(ChromeReading chrome,Size image) {
+            if(!chrome.BattleBox.HasValue)return new Rectangle((int)(image.Width*.40),(int)(image.Height*.45),(int)(image.Width*.33),(int)(image.Height*.34));
+            var b=chrome.BattleBox.Value;return Clip(new Rectangle(b.Left+(int)(b.Width*.49),b.Top+(int)(b.Width*.36),(int)(b.Width*.24),(int)(b.Width*.16)),image);
+        }
+        public static Rectangle Log(ChromeReading chrome,Size image) {
+            if(!chrome.BattleBox.HasValue)return new Rectangle(0,(int)(image.Height*.70),(int)(image.Width*.63),(int)(image.Height*.29));
+            var b=chrome.BattleBox.Value;return Clip(new Rectangle(b.Left+(int)(b.Width*.74)+3,chrome.Header.Bottom+2,(int)(b.Width*.24)-3,(int)(b.Width*.30)),image);
         }
     }
     public enum VisualDecision { ValidateWorld, Move, Pause, ReadBattle }
@@ -142,8 +193,15 @@ namespace MovementPrototype {
                 DrawHud(g);
                 if(detector.Detect(image).Kind!=ChromeKind.Clear)throw new Exception("Dark colored world must not be mistaken for a battle");
                 g.Clear(Color.Black);if(detector.Detect(image).Kind!=ChromeKind.Transition)throw new Exception("Blank transitions must pause without OCR");
+                g.Clear(Color.FromArgb(32,78,45));DrawHud(g);
+                using(var fill=new SolidBrush(Color.FromArgb(55,55,59)))g.FillRectangle(fill,85,60,440,22);
+                g.FillRectangle(Brushes.Black,415,82,110,145);g.DrawString("VS.",font,Brushes.Gold,235,61);
+                var floating=detector.Detect(image);
+                if(floating.Kind!=ChromeKind.Battle || !floating.BattleBox.HasValue || floating.BattleBox.Value.Right>535)throw new Exception("Inset battle panel must override visible party/world HUD: "+floating.Kind+"; "+floating.BattleBox);
+                g.FillRectangle(Brushes.White,415,82,110,145);
+                if(detector.Detect(image).Kind!=ChromeKind.Transition)throw new Exception("Inset battle header with an uncertain menu must never authorize walking");
             }
-            return new List<string> {"PASS: visual watcher distinguishes battle chrome, world/HUD decoration, dark world and blank/login backgrounds","PASS: walking and startup use visual HUD confirmation without OCR; battle arms recognition; exit resumes after 160ms; focus resets trust","PASS: no opponent OCR runs while walking, during uncertain transitions, or while an accepted escape is settling"};
+            return new List<string> {"PASS: visual watcher distinguishes battle chrome, world/HUD decoration, dark world and blank/login backgrounds","PASS: walking and startup use visual HUD confirmation without OCR; battle arms recognition; exit resumes after 160ms; focus resets trust","PASS: no opponent OCR runs while walking, during uncertain transitions, or while an accepted escape is settling","PASS: inset battle geometry overrides visible world HUD; uncertain battle menus pause rather than authorize movement"};
         }
         static void DrawHud(Graphics g,int count=6) {
             using(var fill=new SolidBrush(Color.FromArgb(45,45,45)))for(int n=0;n<count;n++) {int cy=(int)(480*(.065+n*.095));g.FillRectangle(fill,40,cy-14,75,28);g.FillEllipse(Brushes.OrangeRed,10,cy-12,25,24);}

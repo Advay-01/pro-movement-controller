@@ -77,6 +77,7 @@ namespace MovementPrototype {
             parsed=Parse(Text("unrelated text"),Text("Player: You caught a Mimikyu!"));Check(!parsed.Success,"chat-like prefix cannot be a capture acknowledgement");
             parsed=Parse(Text("unrelated text"),Text("You caught a Ralts!"));Check(!parsed.Success,"different captured species rejected");
             parsed=Parse(Text("unrelated text"),Text("Mimikyu was caught!"));Check(parsed.Success,"exact target capture text");
+            parsed=Parse(Text("Fight Pokemon Items Run"));Check(parsed.Control(CatchActionKind.OpenFight)==null,"a line mentioning commands cannot replace the two-row control grid");
             result.Add("PASS: scoped OCR parses four move/PP anchors and accented ball names with stock; unrelated messages and other species cannot confirm a catch");
             var before=Parse(Text("unused"),null,Text("Balls","Pokeball","x516"));var fresh=Parse(Text("unused"),null,Text("Balls","Pokeball","x516"));
             action=new CatchAction {Kind=CatchActionKind.UseBall};Check(CatchVision.Reconfirms(action,before,fresh),"same menu/stock can reconfirm");fresh.Opponent="ralts";Check(!CatchVision.Reconfirms(action,before,fresh),"changed opponent invalidates fresh action");fresh.Opponent="mimikyu";fresh.Control(CatchActionKind.UseBall).Remaining=515;Check(!CatchVision.Reconfirms(action,before,fresh),"changed stock invalidates fresh action");
@@ -101,7 +102,21 @@ namespace MovementPrototype {
                 g.FillRectangle(Brushes.Black,200,140,530,390);g.DrawString("Mimikyu was caught!",font,Brushes.White,30,650);g.Flush();
                 frame=LocalOcr.ReadCatch(image,chrome,Config(),"mimikyu",null,0,3,0).GetAwaiter().GetResult();Check(frame.Success,"Windows OCR for exact scoped capture acknowledgement");
             }
-            return "PASS: Windows OCR catch fixtures confirm the exact target and active catcher, four move/PP anchors, centered ball label/stock and scoped capture acknowledgement. No game input sent.";
+            using(var image=new Bitmap(1000,800))using(var g=Graphics.FromImage(image))using(var font=new Font("Segoe UI",12,FontStyle.Bold))using(var bar=new SolidBrush(Color.FromArgb(55,55,59))) {
+                g.Clear(Color.FromArgb(32,78,45));g.FillRectangle(bar,130,90,680,32);g.FillRectangle(Brushes.Black,630,122,180,210);
+                g.DrawString("Advay",font,Brushes.White,220,92);g.DrawString("VS.",font,Brushes.Gold,320,92);g.DrawString("Wild Seedot",font,Brushes.White,360,92);
+                g.DrawString("Smeargle",font,Brushes.White,480,345);
+                g.FillRectangle(Brushes.Gray,635,400,60,36);g.FillRectangle(Brushes.Gray,735,400,60,36);
+                g.DrawString("Fight",font,Brushes.White,640,380);g.DrawString("Pokemon",font,Brushes.White,720,380);g.DrawString("Items",font,Brushes.White,640,440);g.DrawString("Run",font,Brushes.White,745,440);g.Flush();
+                var chrome=new BattleVisual().Detect(image);Check(chrome.Kind==ChromeKind.Battle && chrome.BattleBox.HasValue,"translated smaller panel is a battle");
+                var frame=LocalOcr.ReadCatch(image,chrome,Config(),"seedot","False Swipe",3,10,0).GetAwaiter().GetResult();
+                Check(frame.View==CatchView.Commands && frame.Wild && frame.Opponent=="seedot" && frame.ActivePokemon=="Smeargle" && frame.Ready,"inset panel OCR uses panel-relative commands and own caption; "+CatchVision.Describe(frame)+"; box="+chrome.BattleBox+"; menu="+LocalOcr.ReadCatchRegion(image,BattleRegions.Menu(chrome,image.Size)).GetAwaiter().GetResult().Text);
+                var run=LocalOcr.ReadBattle(image,chrome.Header,true,BattleRegions.Menu(chrome,image.Size)).GetAwaiter().GetResult();Check(run.ClientPoint.HasValue && run.ItemsPoint.HasValue && run.ClientPoint.Value.X>740,"inset Run/Items pair maps to original client coordinates");
+                using(var logFont=new Font("Segoe UI",10,FontStyle.Bold))g.DrawString("Seedot was caught!",logFont,Brushes.White,638,200);g.Flush();frame=LocalOcr.ReadCatch(image,chrome,Config(),"seedot",null,0,11,0).GetAwaiter().GetResult();Check(frame.Success,"inset capture message read from battle log rather than the world/chat area");
+                g.FillRectangle(bar,130,90,680,32);g.DrawString("Advay",font,Brushes.White,220,92);g.DrawString("VS.",font,Brushes.Gold,320,92);g.DrawString("Rival",font,Brushes.White,360,92);g.Flush();
+                frame=LocalOcr.ReadCatch(image,chrome,Config(),"seedot",null,0,12,0).GetAwaiter().GetResult();Check(!frame.Wild && !frame.Success && frame.Control(CatchActionKind.OpenFight)==null,"trainer caption does not authorize wild catching or a stale capture result");
+            }
+            return "PASS: Windows OCR catch fixtures confirm exact target/catcher, move/PP anchors, ball stock and capture text. Inset-panel commands, Run/Items coordinate mapping and scoped battle-log capture text pass; trainer battles authorize no wild-catching control. No game input sent.";
         }
     }
 }
