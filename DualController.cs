@@ -12,6 +12,7 @@ namespace MovementPrototype {
         bool Available {get;}
         bool Reading {get;}
         bool Waiting {get;}
+        double ReadAllowance {get;}
         void Enter();
         void Leave();
         void Service();
@@ -75,7 +76,7 @@ namespace MovementPrototype {
                 }
                 if(desktop.Foreground!=hunts[old].Window) {Relinquish();Begin(old,now);return;}
                 hunts[old].Service();
-                if(!hunts[old].Wanted || (hunts[old].Waiting && !hunts[old].Reading) || (now>=sliceEnd && (!hunts[old].Reading || now>=sliceEnd+.8))) {
+                if(!hunts[old].Wanted || (hunts[old].Waiting && !hunts[old].Reading) || (now>=sliceEnd && (!hunts[old].Reading || now>=sliceEnd+hunts[old].ReadAllowance))) {
                     int next=Next(old);
                     if(next==old && hunts[old].Wanted) {sliceEnd=now+slice;return;}
                     bool bothWaiting=next>=0 && hunts[old].Waiting && hunts[next].Waiting;
@@ -109,9 +110,10 @@ namespace MovementPrototype {
             public void Focus(long window) {Events.Add("focus:"+window);if(Allow)Window=window;}
         }
         sealed class FakeHunt : ISharedHunt {
-            readonly FakeDesktop desktop;public long Id;public bool Enabled=true,Exists=true,Lease,Pending=false,InBattle=false;public int Moves,Epoch;
+            readonly FakeDesktop desktop;public long Id;public bool Enabled=true,Exists=true,Lease,Pending=false,InBattle=false;public int Moves,Epoch;public double Allowance=.8;
             public FakeHunt(FakeDesktop d,long id) {desktop=d;Id=id;}
             public long Window {get{return Id;}}public bool Wanted {get{return Enabled;}}public bool Available {get{return Exists;}}public bool Reading {get{return Pending;}}public bool Waiting {get{return InBattle;}}
+            public double ReadAllowance {get{return Allowance;}}
             public void Enter() {if(desktop.Window!=Id)throw new Exception("Lease granted without focus");Lease=true;desktop.Events.Add("enter:"+Id);}
             public void Leave() {desktop.Events.Add("release:"+Id);Lease=false;Epoch++;}
             public void Service() {if(!Lease || desktop.Window!=Id)throw new Exception("Input reached the wrong foreground window");Moves++;}
@@ -134,7 +136,9 @@ namespace MovementPrototype {
             d=new FakeDesktop();a=new FakeHunt(d,1) {InBattle=true,Pending=true};b=new FakeHunt(d,2);s=new DualScheduler(new ISharedHunt[] {a,b},d);s.Start(0,5);s.Step(0);s.Step(.07);s.Step(.10);
             if(s.Active!=0)throw new Exception("Finish current recognition before yielding");a.Pending=false;s.Step(.11);s.Step(.12);s.Step(.13);s.Step(.21);s.Step(.22);
             if(s.Active!=1 || b.Moves<1)throw new Exception("Walking partner must get the turn while battle dialogue is busy");s.Stop(false,"done");
-            return new List<string> {"PASS: dual hunts receive exclusive foreground leases, fair turns, and key release before focus changes","PASS: unexpected focus and manual input revoke stale work; busy input and denied focus stop within bounded attempts","PASS: a completed hunt leaves the other active; global emergency stop cancels both; duplicate windows are rejected","PASS: busy battle dialogue yields its turn to the other hunt immediately after current recognition completes"};
+            d=new FakeDesktop();a=new FakeHunt(d,1) {Pending=true,Allowance=2.5};b=new FakeHunt(d,2);s=new DualScheduler(new ISharedHunt[] {a,b},d);s.Start(0,.4);s.Step(0);s.Step(.07);s.Step(1.4);
+            if(s.Active!=0)throw new Exception("Catch screen revalidation needs a bounded longer read allowance");s.Step(3.0);if(s.Active!=-1 || a.Lease)throw new Exception("Catching reads must still relinquish after the bounded allowance");s.Stop(false,"done");
+            return new List<string> {"PASS: dual hunts receive exclusive foreground leases, fair turns, and key release before focus changes","PASS: unexpected focus and manual input revoke stale work; busy input and denied focus stop within bounded attempts","PASS: a completed hunt leaves the other active; global emergency stop cancels both; duplicate windows are rejected","PASS: busy battle dialogue yields its turn to the other hunt immediately after current recognition completes","PASS: catch screen revalidation receives a longer bounded turn allowance and cannot hold foreground indefinitely"};
         }
     }
     sealed class SharedDesktop : ISharedDesktop {
@@ -160,7 +164,7 @@ namespace MovementPrototype {
         bool hotkeys,latched,closing,pending;double startAt,nextHotkeys;string lastState="";
         readonly string logPath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"dual-activity.log");
         public DualApp() {
-            Text="Movement Controller v2.0 — two hunts";Font=new Font("Segoe UI",10);StartPosition=FormStartPosition.CenterScreen;
+            Text="Movement Controller v2.1 — two hunts";Font=new Font("Segoe UI",10);StartPosition=FormStartPosition.CenterScreen;
             var area=Screen.PrimaryScreen.WorkingArea;ClientSize=new Size(Math.Min(1320,area.Width-40),Math.Min(980,area.Height-70));MinimumSize=new Size(950,650);
             scheduler=new DualScheduler(new ISharedHunt[] {hunts[0],hunts[1]},new SharedDesktop(hunts));
             var top=new FlowLayoutPanel {Dock=DockStyle.Top,AutoSize=true,Padding=new Padding(10),WrapContents=true};

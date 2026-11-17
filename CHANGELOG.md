@@ -1,5 +1,13 @@
 # Changes
 
+## v2.1
+
+Adds optional, per-profile **Catch settings** and **Auto-catch exact targets**. Choose a catcher/party slot, ordered preparation and False Swipe turns, ball/ball limit and whether to resume after confirmed capture. Recipes persist independently; auto-catch stays off at launch. A read-only catching diagnostic is included.
+
+Catching blocks movement and Run, confirms the target and visible control twice before input, requires PP/stock evidence, and uses bounded navigation/action/overall limits. Capture text plus stable world evidence is required before resuming. Stop, emergency and focus/handoff changes invalidate pending actions. Unknown screens stop for manual handling. Ball stock has a narrow OCR retry for isolated counts; users must leave the bag on Balls with the selected ball visible.
+
+Validation includes 66 local groups, Windows OCR fixtures and UI inspection. No live target capture has been verified; the first configured capture needs supervision. Previous release escape performance reports remain historical.
+
 ## v2.0
 
 Adds one coordinated controller with two hunting profiles. Each keeps its own client, protected species, movement settings, Repel option and alerts. The shared switcher grants one foreground turn at a time, releases owned input before handing off focus, and cancels stale recognition on every handoff. Normal Windows focus restrictions remain active.

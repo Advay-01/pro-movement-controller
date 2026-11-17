@@ -45,6 +45,16 @@ PASS: dual hunts receive exclusive foreground leases, fair turns, and key releas
 PASS: unexpected focus and manual input revoke stale work; busy input and denied focus stop within bounded attempts
 PASS: a completed hunt leaves the other active; global emergency stop cancels both; duplicate windows are rejected
 PASS: busy battle dialogue yields its turn to the other hunt immediately after current recognition completes
+PASS: catch screen revalidation receives a longer bounded turn allowance and cannot hold foreground indefinitely
+PASS: catching configuration validates draft/start separately, rejects damaging recipes and unbounded stock use, and requires two exact target readings
+PASS: configured False Swipe, one ball, exact capture acknowledgement and stable world complete the sequence; world alone cannot resume
+PASS: escape from balls retries only within the configured cap; zero PP and empty stock stop before input
+PASS: wrong species, stale frames, revoked foreground lease, handoff epochs, emergency cancellation and unconfirmed battle exit authorize no catching input
+PASS: ordered preparation and repeated False Swipe turns are acknowledged individually; catcher selection requires matching name and party slot
+PASS: ignored menus and unacknowledged attacks reach bounded stops; optional expected leading Pokémon is verified before resume
+PASS: scoped OCR parses four move/PP anchors and accented ball names with stock; unrelated messages and other species cannot confirm a catch
+PASS: second-screen validation checks the same species, menu, control, position, active catcher and stock before input
+PASS: profile recipe persistence and deep copies keep each window's configuration independent
 PASS: inactive shared profiles reject key-down, while revoked leases retain key-release cleanup
 PASS: short shared turns alternate their starting direction even when configured holds are interrupted
 PASS: Repel renewal accepts only the exact expired/use-another prompt for Repel, Super Repel or Max Repel

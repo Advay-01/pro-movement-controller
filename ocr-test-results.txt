@@ -3,3 +3,4 @@ AdvayO VS. Wild Seedot
 Fight
 Items
 Local Trade
+PASS: Windows OCR catch fixtures confirm the exact target and active catcher, four move/PP anchors, centered ball label/stock and scoped capture acknowledgement. No game input sent.

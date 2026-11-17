@@ -1,0 +1,12 @@
+{
+  "version": "2.1",
+  "tested_on": "2026-11-17",
+  "local_check_groups": 66,
+  "local_check_result": "passed",
+  "windows_ocr_fixtures": "passed: existing encounter/Repel recognition; catch target, active catcher, four move/PP anchors, ball label/stock and exact capture text",
+  "ui": "single profile, dual profiles and settings dialog inspected; auto-catch off by default; separate recipe settings",
+  "live_inspection": "backpack Balls pocket and one-click item behavior inspected outside battle; no ball thrown and no attack selected",
+  "live_target_capture_verified": false,
+  "required_setup": "Configure and test the catching recipe; leave the bag on Balls with the chosen ball visible; supervise the first capture",
+  "limits": "Configured move counts rather than exact HP measurement; no bag scrolling, PP replenishment or status reapplication; unknown layouts/wording stop for manual attention"
+}

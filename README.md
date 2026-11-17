@@ -1,4 +1,20 @@
-# Movement Controller v2.0 — testing prototype
+# Movement Controller v2.1 — testing prototype
+
+## Optional auto-catch settings
+
+Click **Catch settings…** in each profile. Choose the catcher's displayed name and party slot, ordered preparation/False Swipe move slots and use counts, ball, maximum balls per target, optional expected leading Pokémon after capture, and **Resume hunting after a confirmed catch**. Save, then enable **Auto-catch exact targets**. It is off on every app launch. Each profile keeps its own local recipe. Changing protected targets requires reviewing the settings again. Draft recipes can be saved; starting requires the tested-sequence checkbox.
+
+Before starting, manually leave PRO's backpack on its **Balls** tab with the selected ball visible. The controller reads the label and stock; it does not scroll the bag or buy balls. A ball click attempts to use it immediately. Configure your actual catcher and move positions; the app does not infer a team setup. For Mimikyu, use your tested Ghost/Disguise preparation sequence. False Swipe uses are configured and bounded; the app does **not** measure exactly 1 HP. It does not automatically reapply status moves after ball failures or replenish PP.
+
+Two fresh exact target readings enter a separate catching workflow. Movement, Right Shift and Run clicks are blocked throughout it. Every action requires a recognized target and matching menu/control, positive PP or stock where applicable, then a second screen check. The selected catcher must match its displayed name and party slot. A busy-to-ready transition or scoped action message acknowledges each submitted move. Ball failures retry within the configured limit. Near-target and unreadable names remain protected.
+
+Only explicit capture text for the protected species followed by a stable clear world can resume hunting. The optional leading-Pokémon field verifies the party; it does not rearrange it. Unexpected battle exit, fainting, immunity/failure messages, unreadable controls/PP/stock, exhausted limits, slow recognition and focus changes stop for manual attention. Menu navigation, action waits and overall capture duration are bounded. **F8** and **F10** cancel pending input.
+
+Scheduled dual-window handoffs invalidate stale readings and preserve completed progress. If a handoff interrupts an action awaiting its final screen check, that profile stops. Catch recognition may extend a foreground turn by up to 2.5 seconds; other recognition keeps its earlier 0.8-second allowance. Busy catch animations yield to the other hunt.
+
+**Check catch screen (no input)** reports the recognized view, species, catcher and controls through **Show last screen reading**. Per-profile files `catch-settings.json`, `catch-settings-window-1.json` and `catch-settings-window-2.json` stay local and are excluded from Git and release ZIPs.
+
+Validation: 66 local check groups plus Windows OCR fixtures cover the workflow, wrong species, move order/PP, stock/budgets, capture confirmation, persistence, lease/epoch cancellation, dual turn allowance and second-screen validation. The settings dialog and both profile modes were inspected, and the backpack was inspected without throwing a ball. **A live target capture has not been verified.** Use the read-only diagnostic and supervise the first configured capture. Other layouts or wording may stop for manual handling. Historical escape timings below describe earlier releases, not catching performance.
 
 ## Two-window hunting
 
@@ -10,7 +26,7 @@ Windows input is shared, so each game gets a short foreground turn. All owned mo
 
 While one game is waiting for battle dialogue or an escape animation, it yields its turn to the other hunt. The busy game is revisited for a brief pixel-based readiness check, with no repeated name OCR while its controls are still busy. Once ready, fresh name verification precedes Run. Movement holds can be shortened by a handoff; consecutive walking turns alternate their starting direction to keep interrupted pulses balanced. [Windows can refuse normal focus requests](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow); refusal stops the run.
 
-When a target is detected, its profile stops and alerts you while the other hunt can continue. Press F8 to stop switching before catching or interacting manually. Target encounters receive no automated catching input. Closed, changed or minimized clients stop their profile; failed focus acquisition stops the shared run.
+With Auto-catch off, a target stops its profile and alerts you while the other hunt can continue. Press F8 to stop switching before catching or interacting manually. Auto-catch is configured independently in each profile as described above. Closed, changed or minimized clients stop their profile; failed focus acquisition stops the shared run.
 
 The prepared local setup protects **Mimikyu** in window 1 and **Ralts** in window 2, with **Continue Repel enabled only for window 2**, a 0.30-second hold, a 0.05-second gap, and continuous operation. Process IDs in the window selectors identify the two client instances. `--prepare-dual Mimikyu Ralts <process1> <process2>` prepares that mapping and waits for F8; process IDs must be refreshed when clients restart.
 
@@ -28,7 +44,7 @@ The cheap visual watcher triggers OCR only when matching dialog geometry appears
 
 The old four-second escape retry timer could ignore the first request during a battle introduction, then wait several seconds after the dialogue ended. v1.8 watches the actual battle controls: red means busy; gray or the blue hover highlight means ready. After two matching, known-species readings confirm a non-target, Run follows the ready transition without that fixed wait.
 
-The verified opponent heading may be reused within the same continuously observed battle only when every pixel in its OCR-bounded caption is identical. A changed heading requires fresh recognition. New battles, changed window geometry and focus resets clear this evidence. Exact targets and names resembling a target stop the controller before any escape action.
+The verified opponent heading may be reused within the same continuously observed battle only when every pixel in its OCR-bounded caption is identical. A changed heading requires fresh recognition. New battles, changed window geometry and focus resets clear this evidence. Exact targets and names resembling a target never authorize escape. With Auto-catch off they stop the controller; with it on, only exact targets enter the configured workflow.
 
 If a click is ignored while controls remain ready, requests are spaced by at least 200 ms. An observed busy transition acknowledges the request and suppresses retries until controls return or the world appears. Three acknowledged failed escapes, 40 unacknowledged requests, or 15 seconds of unresolved requests stop further input when controls are ready. Unreadable species never authorize fleeing. Recognition that takes too long stops the run.
 

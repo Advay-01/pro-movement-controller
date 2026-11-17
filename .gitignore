@@ -13,3 +13,4 @@ activity.log
 .vs/
 .vscode/
 .idea/
+catch-settings*.json

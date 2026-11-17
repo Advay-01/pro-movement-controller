@@ -138,6 +138,33 @@ namespace MovementPrototype {
             foreach(var line in result.Lines) lines.Add(line.Text);
             return String.Join("\n",lines);
         }
+        public static async Task<CatchTextRegion> ReadCatchRegion(Bitmap image,Rectangle area) {
+            area.Intersect(new Rectangle(Point.Empty,image.Size));if(area.Width<1 || area.Height<1)throw new InvalidOperationException("Catching region is outside the client.");
+            double factor=Math.Min(3,(double)OcrEngine.MaxImageDimension/Math.Max(area.Width,area.Height));
+            using(var crop=new Bitmap(Math.Max(1,(int)(area.Width*factor)),Math.Max(1,(int)(area.Height*factor)))) {
+                using(var graphics=Graphics.FromImage(crop)) {graphics.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;graphics.DrawImage(image,new Rectangle(Point.Empty,crop.Size),area,GraphicsUnit.Pixel);}
+                float sx=(float)area.Width/crop.Width,sy=(float)area.Height/crop.Height;
+                var result=await Recognize(crop);var region=new CatchTextRegion {Text=TextOf(result)};
+                foreach(var line in result.Lines) {
+                    RectangleF bounds=RectangleF.Empty;bool first=true;var row=new CatchTextRow {Text=line.Text};
+                    foreach(var word in line.Words) {var r=word.BoundingRect;var b=new RectangleF(area.Left+(float)r.X*sx,area.Top+(float)r.Y*sy,(float)r.Width*sx,(float)r.Height*sy);bounds=first ? b : RectangleF.Union(bounds,b);first=false;row.Words.Add(new ButtonWord(word.Text,b.X,b.Y,b.Width,b.Height));}
+                    if(!first) {row.Bounds=bounds;region.Rows.Add(row);}
+                }
+                return region;
+            }
+        }
+        public static async Task<CatchFrame> ReadCatch(Bitmap image,ChromeReading chrome,CatchConfig config,string species,string move,int slot,long id,double at) {
+            var headerArea=chrome.Kind==ChromeKind.Battle ? chrome.Header : new Rectangle(0,0,image.Width,(int)(image.Height*.30));
+            var menuArea=new Rectangle((int)(image.Width*.72),(int)(image.Height*.13),(int)(image.Width*.28),(int)(image.Height*.80));
+            var bagArea=new Rectangle((int)(image.Width*.20),(int)(image.Height*.18),(int)(image.Width*.58),(int)(image.Height*.48));
+            var ownArea=new Rectangle((int)(image.Width*.40),(int)(image.Height*.45),(int)(image.Width*.33),(int)(image.Height*.34));
+            var logArea=new Rectangle(0,(int)(image.Height*.70),(int)(image.Width*.63),(int)(image.Height*.29));
+            var leadArea=new Rectangle(0,0,(int)(image.Width*.22),(int)(image.Height*.13));
+            var regions=await Task.WhenAll(ReadCatchRegion(image,headerArea),ReadCatchRegion(image,menuArea),ReadCatchRegion(image,ownArea),ReadCatchRegion(image,logArea),ReadCatchRegion(image,leadArea),ReadCatchRegion(image,bagArea));
+            var stockArea=CatchVision.StockArea(regions[5],config.Ball,image.Size);
+            if(stockArea.HasValue) {var count=await ReadCatchRegion(image,stockArea.Value);regions[5].Rows.AddRange(count.Rows);regions[5].Text+="\n"+count.Text;}
+            return CatchVision.Parse(regions[0],regions[1],regions[2],regions[3],regions[4],chrome,image,config,species,move,slot,id,at,regions[5]);
+        }
         static async Task<OcrResult> Recognize(Bitmap image) {
             var engine=AcquireEngine();
             try {

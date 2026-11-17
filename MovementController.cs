@@ -249,7 +249,7 @@ namespace MovementPrototype {
             else PracticeKey=null;
         }
     }
-    sealed class App : Form,ISharedHunt {
+    sealed partial class App : Form,ISharedHunt {
         readonly bool managedMode;
         readonly string statsName;
         bool managedArmed,managedStarted,managedResumePending,managedBattleContinuity,managedWaiting,managedReadinessObserved;
@@ -295,7 +295,7 @@ namespace MovementPrototype {
             return trackedRun.HasValue && trackedItems.HasValue && image.Width==trackedWidth && image.Height==trackedHeight && Math.Abs(chrome.GoldX-trackedGoldX)<=8 && Math.Abs(chrome.Header.Top-trackedHeaderY)<=8;
         }
         void WatchControls(Bitmap image,ChromeReading chrome) {
-            if(!trackedRun.HasValue)return;
+            if(catchFlow.Active || !trackedRun.HasValue)return;
             if(!SameControls(image,chrome)) {ResetControls();stableCount=0;stableName="";nextScan=0;return;}
             var state=BattleControlReady.Read(image,trackedRun.Value,trackedItems.Value);
             readyEscape.Observe(state,clock.Elapsed.TotalSeconds);
@@ -307,6 +307,7 @@ namespace MovementPrototype {
             }
         }
         void ClickReadyButton(string name,Point point,bool reusedHeader) {
+            if(catchFlow.Active || EncounterRecognition.CloseToTarget(name,desiredNames))throw new InvalidOperationException("Run blocked for protected/catching encounter.");
             Native.ClickClient(output.Target,output.Process,point);
             escapeAttempts++;waitSince=clock.Elapsed.TotalSeconds;readyEscape.Submitted(waitSince);
             Activity("RUN: ready-control button clicked for "+name+"; "+Math.Round((waitSince-readyEscape.ReadyAt)*1000)+"ms after ready observed; accepted="+readyEscape.Accepted+(reusedHeader ? "; exact verified heading reused" : ""));
@@ -363,7 +364,7 @@ namespace MovementPrototype {
             output.LeaseRequired=managedMode;
             controller = new Controller(output);
             output.RunKey=runKey;
-            Text="Movement Controller v2.0 — testing prototype";
+            Text="Movement Controller v2.1 — testing prototype";
             ClientSize=new Size(630,900); MinimumSize=new Size(650,780);
             Font=new Font("Segoe UI",10); StartPosition=FormStartPosition.CenterScreen;
             var flow=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false, Padding=new Padding(22), AutoScroll=true };
@@ -397,6 +398,7 @@ namespace MovementPrototype {
             flow.Controls.Add(new Label {Text="Run Away key: Right Shift (pressed briefly, then released)",AutoSize=true});
             flow.Controls.Add(clickFallback);
             flow.Controls.Add(Row("Target names",targetNames));
+            InitializeCatchUi(flow);
             flow.Controls.Add(alerts); flow.Controls.Add(encounterStatus); flow.Controls.Add(Row(checkEncounter,screenReading));
             checkEncounter.Click += delegate { Guard(delegate {
                 if(!output.Available()) throw new InvalidOperationException("Select the visible game window first.");
@@ -430,6 +432,7 @@ namespace MovementPrototype {
             };
             external.CheckedChanged += delegate { if (!controller.Running) output.External=external.Checked; };
             controller.FocusRecoveryStarted += delegate {
+                if(catchFlow.Active)catchFlow.Cancel("Stopped — focus changed during automatic catching");
                 generation++; ReleaseEscape(); stableCount=0; stableName="";
                 repelPolicy.Reset();
                 readGrace.Reset();
@@ -456,6 +459,7 @@ namespace MovementPrototype {
         public bool Wanted {get{return managedArmed && (!managedStarted || controller.Running);}}
         public bool Available {get{return output.Available();}}
         public bool Reading {get{return scanning;}}
+        public double ReadAllowance {get{return catchFlow.Active ? 2.5 : .8;}}
         public bool Waiting {get{return managedWaiting && managedReadinessObserved;}}
         public bool ManagedShiftHeld {get{return escapeHeld;}}
         public bool ManagedLatched {get{return controller.Latched;}}
@@ -469,11 +473,13 @@ namespace MovementPrototype {
             Activity("PROFILE: protected="+protectedTarget+"; repel="+renewRepel+"; process="+process);
         }
         public void ValidateManaged() {
+            if(catchDialogOpen)throw new InvalidOperationException("Close the catching settings dialog before starting.");
             if(!managedMode || scanning)throw new InvalidOperationException("Wait for profile recognition to finish.");
             if(controller.Latched)throw new InvalidOperationException("Reset the shared emergency stop before restarting.");
             if(!external.Checked || !output.Available())throw new InvalidOperationException("Enable input and select a restored game window in each profile.");
             ReadSettings().Validate();
             if(encounters.Checked)desiredNames=EncounterRecognition.Targets(targetNames.Text);
+            ValidateCatch();
         }
         public void QueueManaged() {ValidateManaged();managedArmed=true;managedStarted=false;controller.Stop("Queued — waiting for shared focus");RefreshState();}
         public new void Enter() {
@@ -485,6 +491,7 @@ namespace MovementPrototype {
             try {controller.YieldTurn(clock.Elapsed.TotalSeconds);ReleaseEscape();}
             finally {
                 output.LeaseGranted=false;generation++;stableCount=0;stableName="";
+                if(catchFlow.Active) {if(catchInputPending)StopCatch("Stopped — foreground turn ended before the catching action was delivered");else catchFlow.Suspend();}
                 verifiedHeaderSignature=verifiedHeaderName=null;verifiedHeadingArea=null;
                 managedResumePending=scene.InBattle;readyEscape.Observe(ControlReady.Unknown,clock.Elapsed.TotalSeconds);
                 repelPolicy.Suspend();scene.Reset();visualDecision=VisualDecision.ValidateWorld;lastChrome=ChromeKind.Transition;nextProbe=nextScan=0;
@@ -494,6 +501,7 @@ namespace MovementPrototype {
         public void Service() {
             if(!output.LeaseGranted)return;
             Tick();
+            if(catchFlow.Active) {managedWaiting=catchFlow.WaitingAnimation && catchBusy;managedReadinessObserved=true;return;}
             if(visualDecision==VisualDecision.ReadBattle && trackedRun.HasValue && readyEscape.State==ControlReady.Busy)managedWaiting=managedWaiting || stableCount>=2;
             else if(readyEscape.State==ControlReady.Ready || lastChrome==ChromeKind.Clear)managedWaiting=false;
         }
@@ -511,6 +519,7 @@ namespace MovementPrototype {
             }
             if(count!=1) throw new InvalidOperationException("Open exactly one PROClient window before preparing automatic mode.");
             targets.SelectedItem=match; targetNames.Text=protectedTarget;
+            hold.Value=.30m;gap.Value=.05m;
             untilStop.Checked=true; external.Checked=true; encounters.Checked=true; autoFocus.Checked=true;
             continueRepel.Checked=renewRepel;
             controller.Stop("Ready — external input armed; press F8 in PRO");
@@ -570,6 +579,7 @@ namespace MovementPrototype {
         void Toggle() { Toggle(false); }
         void Toggle(bool shortcut) {
             Guard(delegate {
+                if(catchDialogOpen)return;
                 lastError=null;
                 if(previewPending) { StopAll("Read-only check cancelled"); return; }
                 if(pendingStart) { pendingStart=false; controller.Stop("Start cancelled"); return; }
@@ -584,12 +594,14 @@ namespace MovementPrototype {
                     if(!output.External) throw new InvalidOperationException("Encounter handling needs a selected game window and keyboard input enabled. Leave it off for local practice.");
                     desiredNames=EncounterRecognition.Targets(targetNames.Text);
                 }
+                ValidateCatch();
                 if(output.External && output.Target==IntPtr.Zero) throw new InvalidOperationException("Choose the authorized test window from the window list first. Use Refresh if it is missing.");
                 if(output.External && !output.Background && !shortcut) { pendingStart=true; captureAt=clock.Elapsed.TotalSeconds+3; return; }
                 StartRun();
             });
         }
         void StartRun() {
+            ValidateCatch();catchFlow.Reset();nextCatchScan=0;catchBusy=false;catchWorld.Reset();
             generation++; stableName=""; stableCount=0; escapeAttempts=0;
             managedResumePending=managedBattleContinuity=managedWaiting=managedReadinessObserved=false;
             repelPolicy.Reset();repelReads=repelClicks=0;
@@ -603,8 +615,8 @@ namespace MovementPrototype {
             controller.Start(settings,clock.Elapsed.TotalSeconds,encounters.Checked || continueRepel.Checked);
         }
         void ReleaseEscape() { runKey.Release(); }
-        void StopAll(string reason) { lastError=null; pendingStart=false; previewPending=false; generation++;repelPolicy.Reset(); try { controller.Stop(reason); } finally { ReleaseEscape(); SaveVisualStats(); } }
-        void EmergencyAll() { lastError=null; pendingStart=false; previewPending=false; generation++;repelPolicy.Reset(); try { controller.Emergency(); } finally { ReleaseEscape(); SaveVisualStats(); } }
+        void StopAll(string reason) { lastError=null; pendingStart=false; previewPending=false;catchPreviewPending=false; generation++;repelPolicy.Reset();if(catchFlow.Active)catchFlow.Cancel(reason); try { controller.Stop(reason); } finally { ReleaseEscape(); SaveVisualStats(); } }
+        void EmergencyAll() { lastError=null; pendingStart=false; previewPending=false;catchPreviewPending=false; generation++;repelPolicy.Reset();if(catchFlow.Active)catchFlow.Cancel("Emergency stop"); try { controller.Emergency(); } finally { ReleaseEscape(); SaveVisualStats(); } }
         Settings ReadSettings() { return new Settings { First=(Keys)first.SelectedItem, Second=(Keys)second.SelectedItem, Hold=(double)hold.Value, Gap=(double)gap.Value, Limit=(double)limit.Value, UntilStopped=untilStop.Checked, AutoFocus=!managedMode && autoFocus.Checked && output.External && !output.Background }; }
         void Guard(Action action) {
             try { action(); }
@@ -619,7 +631,7 @@ namespace MovementPrototype {
         }
         void Tick() {
             if(closing) return;
-            if(previewPending && clock.Elapsed.TotalSeconds>=previewAt) { previewPending=false; ScanEncounter(true); }
+            if(previewPending && clock.Elapsed.TotalSeconds>=previewAt) { previewPending=false;bool forCatch=catchPreviewPending;catchPreviewPending=false;if(forCatch)ScanCatch(true);else ScanEncounter(true); }
             if(!hotkeys && !controller.Running && !pendingStart && clock.Elapsed.TotalSeconds>=nextHotkeyRetry) {
                 nextHotkeyRetry=clock.Elapsed.TotalSeconds+1; RegisterShortcuts();
             }
@@ -629,8 +641,14 @@ namespace MovementPrototype {
             }
             if(escapeHeld && (!controller.Running || clock.Elapsed.TotalSeconds>=runKey.ReleaseAt)) Guard(delegate { ReleaseEscape(); });
             Guard(delegate { controller.Tick(clock.Elapsed.TotalSeconds); });
+            if(controller.Running && catchFlow.Phase==CatchPhase.Stopped) {Guard(delegate {StopAll(catchFlow.Status);});}
             if(controller.Running && !controller.RecoveringFocus && output.Ready() && (encounters.Checked || continueRepel.Checked)) {
                 double now=clock.Elapsed.TotalSeconds;
+                if(catchFlow.Active) {
+                    controller.Pause(true,now);ReleaseEscape();
+                    if(!scanning && now>=nextCatchScan)ScanCatch();
+                    RefreshState();return;
+                }
                 if(now>=nextProbe) { nextProbe=now+.08; Guard(ProbeScene); }
                 bool waitingForDialogue=managedMode && managedWaiting && readyEscape.State==ControlReady.Busy;
                 bool needName=encounters.Checked && !waitingForDialogue && !repelPolicy.Active && visualDecision==VisualDecision.ReadBattle && (stableCount<2 || !trackedRun.HasValue || readyEscape.Due(now) || readyEscape.StopRequired(now));
@@ -749,6 +767,9 @@ namespace MovementPrototype {
             continueRepel.Enabled=edit && !background.Checked;
             encounters.Enabled=edit && !background.Checked;
             clickFallback.Enabled=edit && !background.Checked;
+            autoCatch.Enabled=edit && !background.Checked;
+            catchSettings.Enabled=edit;
+            checkCatch.Enabled=edit && !managedMode;
             alerts.Enabled=!background.Checked;
             screenReading.Enabled=edit && lastScreenText.Length>0;
             checkEncounter.Enabled=edit && !managedMode;
@@ -841,6 +862,11 @@ namespace MovementPrototype {
                 }
                 readGrace.Reset();
                 if(EncounterRecognition.CloseToTarget(reading.Name,desiredNames)) {
+                    if(autoCatch.Checked && desiredNames.Contains(reading.Name)) {
+                        if(reading.Name==stableName)stableCount++;else {stableName=reading.Name;stableCount=1;}
+                        if(stableCount<2) {encounterStatus.Text="Target seen — confirming exact name before catching.";return;}
+                        BeginCatch(reading.Name);return;
+                    }
                     StopForTarget(reading.Name);
                     return;
                 }
@@ -877,7 +903,7 @@ namespace MovementPrototype {
             Activity("FIRST_ESCAPE: "+Math.Round((clock.Elapsed.TotalSeconds-battleStarted)*1000)+"ms after visual battle detection");
         }
         public string SmokeReport() {
-            return "First=" + first.SelectedItem + "; Second=" + second.SelectedItem + "; GlobalHotkeys=" + hotkeys + "; StartEnabled=" + toggle.Enabled + "; ContinueRepel="+continueRepel.Checked+"; Status=" + detail.Text;
+            return "First=" + first.SelectedItem + "; Second=" + second.SelectedItem + "; GlobalHotkeys=" + hotkeys + "; StartEnabled=" + toggle.Enabled + "; ContinueRepel="+continueRepel.Checked+"; AutoCatch="+autoCatch.Checked+"; CatchSettings="+catchSettings.Enabled+"; Status=" + detail.Text;
         }
     }
     static class Program {
@@ -888,6 +914,10 @@ namespace MovementPrototype {
             if(args.Length>1 && args[0]=="--ocr-test") return Tests.OcrTest(args[1]);
             if(args.Length>2 && args[0]=="--repel-image-test") return Tests.RepelImageTest(args[1],args[2],args.Length==4 && args[3]=="--expect-reject");
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+            if(args.Length>1 && args[0]=="--catch-ui-smoke") {
+                using(var dialog=new CatchSettingsDialog(new CatchConfig(),"mimikyu, ralts")) {dialog.Show();Application.DoEvents();using(var bitmap=new Bitmap(dialog.Width,dialog.Height)) {dialog.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));bitmap.Save(args[1]);}dialog.Close();}
+                return 0;
+            }
             if(args.Length>1 && args[0]=="--ui-smoke") {
                 using(var app=new App()) {
                     app.Show(); Application.DoEvents();
@@ -1111,6 +1141,7 @@ namespace MovementPrototype {
                 results.AddRange(VisualSceneGate.Tests());
                 results.AddRange(ReadyEscapePolicy.Tests());
                 results.AddRange(DualScheduler.Tests());
+                results.AddRange(CatchTests.Run());
                 var leaseOutput=new Output(delegate(int key) {return false;}) {LeaseRequired=true};
                 bool leaseRejected=false;try {leaseOutput.Down(Keys.Left);}catch(InvalidOperationException) {leaseRejected=true;}
                 Check(leaseRejected && !leaseOutput.Ready() && !leaseOutput.PracticeKey.HasValue,"Inactive shared profile must not send movement");
@@ -1205,7 +1236,7 @@ namespace MovementPrototype {
                         var quickWorld=EncounterRecognition.Parse(LocalOcr.ReadGame(game,false).GetAwaiter().GetResult());
                         Check(quickWorld.Overworld && !quickWorld.Battle,"fast two-region OCR confirms overworld");
                     }
-                    File.WriteAllText(path,"PASS: Windows OCR reads an exact Max Repel renewal and its Yes button; synthetic wild header and battle commands also pass.\n"+text); return 0;
+                    File.WriteAllText(path,"PASS: Windows OCR reads an exact Max Repel renewal and its Yes button; synthetic wild header and battle commands also pass.\n"+text+"\n"+CatchTests.Ocr()); return 0;
                 }
             } catch(Exception ex) { File.WriteAllText(path,"FAIL: "+ex); return 1; }
         }
