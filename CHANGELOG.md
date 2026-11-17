@@ -1,5 +1,11 @@
 # Changes
 
+## v2.1.4
+
+Adds a white/gold contrast OCR retry when the battle title has no exact recognized species. Unknown text still cannot authorize Run; target checks and fresh confirmation remain required. An Arbok Windows OCR fixture and target-protection check pass. Live Arbok recognition remains to be verified.
+
+Unchecked Repel now pauses movement on the renewal dialog without scheduling item input, including movement-only PRO mode. Changing the option invalidates pending confirmations, and the final click checks it again. This build is prepared with Repel off. 69 local groups and Windows OCR fixtures pass; live disabled-prompt behavior is not yet verified.
+
 ## v2.1.3
 
 Fixes movement remaining paused on the world map. Party cards keep their UI scale while the game window changes size; the former detector sampled incorrect vertical positions. HUD detection now locates repeated nameplate edges, checks actual card spacing and colours, and caches a revalidated layout. Battle-header checks cover panels lower in the window. Read-only scene checks record scene/HUD/window diagnostics.

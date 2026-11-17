@@ -364,7 +364,7 @@ namespace MovementPrototype {
             output.LeaseRequired=managedMode;
             controller = new Controller(output);
             output.RunKey=runKey;
-            Text="Movement Controller v2.1.3 — testing prototype";
+            Text="Movement Controller v2.1.4 — testing prototype";
             ClientSize=new Size(630,900); MinimumSize=new Size(650,780);
             Font=new Font("Segoe UI",10); StartPosition=FormStartPosition.CenterScreen;
             var flow=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false, Padding=new Padding(22), AutoScroll=true };
@@ -411,6 +411,7 @@ namespace MovementPrototype {
                 MessageBox.Show(this,lastScreenText.Length==0 ? "No screen reading yet." : lastScreenText,"Last recognized screen text",MessageBoxButtons.OK,MessageBoxIcon.Information);
             };
             untilStop.CheckedChanged += delegate { RefreshState(); };
+            continueRepel.CheckedChanged += delegate {repelPolicy.Reset();Activity("REPEL OPTION: "+(continueRepel.Checked ? "enabled" : "disabled"));};
             flow.Controls.Add(external);if(!managedMode) {flow.Controls.Add(autoFocus);flow.Controls.Add(backgroundNote);}
             flow.Controls.Add(capture); flow.Controls.Add(targets); flow.Controls.Add(target);
             flow.Controls.Add(new Label { Text="PRO prohibits unauthorized bots and macros. Use live input only within\nexplicit staff-approved test scope. Selecting a window is not authorization.", AutoSize=true, ForeColor=Color.DarkRed });
@@ -612,8 +613,9 @@ namespace MovementPrototype {
             nextScan=0; waitSince=clock.Elapsed.TotalSeconds;
             var settings=ReadSettings();
             if(settings.AutoFocus && !output.Ready() && !output.Busy()) output.RequestFocus();
-            controller.Start(settings,clock.Elapsed.TotalSeconds,encounters.Checked || continueRepel.Checked);
+            controller.Start(settings,clock.Elapsed.TotalSeconds,WatchGameScene());
         }
+        bool WatchGameScene() {return encounters.Checked || continueRepel.Checked || output.External && Native.Title(output.Target)=="PROClient";}
         void ReleaseEscape() { runKey.Release(); }
         void StopAll(string reason) { lastError=null; pendingStart=false; previewPending=false;catchPreviewPending=false; generation++;repelPolicy.Reset();if(catchFlow.Active)catchFlow.Cancel(reason); try { controller.Stop(reason); } finally { ReleaseEscape(); SaveVisualStats(); } }
         void EmergencyAll() { lastError=null; pendingStart=false; previewPending=false;catchPreviewPending=false; generation++;repelPolicy.Reset();if(catchFlow.Active)catchFlow.Cancel("Emergency stop"); try { controller.Emergency(); } finally { ReleaseEscape(); SaveVisualStats(); } }
@@ -642,7 +644,7 @@ namespace MovementPrototype {
             if(escapeHeld && (!controller.Running || clock.Elapsed.TotalSeconds>=runKey.ReleaseAt)) Guard(delegate { ReleaseEscape(); });
             Guard(delegate { controller.Tick(clock.Elapsed.TotalSeconds); });
             if(controller.Running && catchFlow.Phase==CatchPhase.Stopped) {Guard(delegate {StopAll(catchFlow.Status);});}
-            if(controller.Running && !controller.RecoveringFocus && output.Ready() && (encounters.Checked || continueRepel.Checked)) {
+            if(controller.Running && !controller.RecoveringFocus && output.Ready() && WatchGameScene()) {
                 double now=clock.Elapsed.TotalSeconds;
                 if(catchFlow.Active) {
                     controller.Pause(true,now);ReleaseEscape();
@@ -666,9 +668,16 @@ namespace MovementPrototype {
             practice.Invalidate();
         }
         bool WatchRepel(Bitmap image,ChromeReading chrome) {
-            if(!continueRepel.Checked)return false;
             bool wasActive=repelPolicy.Active;int requests=repelPolicy.Requests;
             var bounds=repelVisual.Find(image);
+            if(!continueRepel.Checked) {
+                repelPolicy.Reset();
+                if(!bounds.HasValue)return false;
+                controller.Pause(true,clock.Elapsed.TotalSeconds);ReleaseEscape();
+                visualDecision=scene.Observe(ChromeKind.Transition,clock.Elapsed.TotalSeconds);lastChrome=ChromeKind.Transition;
+                encounterStatus.Text="Repel expired — renewal is OFF. Dismiss the prompt manually; no item input sent.";
+                return true;
+            }
             repelPolicy.Observe(bounds,clock.Elapsed.TotalSeconds);
             if(!repelPolicy.Active) {
                 if(wasActive && requests>0)Activity("REPEL: renewal dialog closed; visual world check resumes");
@@ -683,6 +692,15 @@ namespace MovementPrototype {
             if(!wasActive)Activity("REPEL: possible renewal dialog; movement released");
             if(!scanning && repelPolicy.NeedsRead(clock.Elapsed.TotalSeconds))ScanRepel(repelPolicy.Bounds);
             return true;
+        }
+        internal static string RepelDisabledTest() {
+            using(var app=new App())using(var frame=new Bitmap(640,480))using(var g=Graphics.FromImage(frame)) {
+                app.timer.Stop();app.continueRepel.Checked=false;app.controller.Start(new Settings {UntilStopped=true},0);
+                g.Clear(Color.FromArgb(32,78,45));using(var title=new SolidBrush(Color.FromArgb(78,74,82)))using(var body=new SolidBrush(Color.FromArgb(40,35,50))) {g.FillRectangle(title,190,170,215,25);g.FillRectangle(body,190,195,215,73);g.FillRectangle(Brushes.Red,286,268,60,22);g.FillRectangle(Brushes.LimeGreen,346,268,60,22);}g.Flush();
+                if(!app.WatchRepel(frame,new ChromeReading {Kind=ChromeKind.Clear}) || app.visualDecision!=VisualDecision.Pause || app.repelPolicy.Requests!=0 || app.scanning)throw new Exception("Unchecked Repel must pause on the dialog without scheduling OCR or item input");
+                app.StopAll("Test complete");
+            }
+            return "PASS: unchecked Repel releases movement and pauses on renewal dialog without scheduling item input";
         }
         async void ScanRepel(Rectangle bounds) {
             scanning=true;int run=generation,epoch=repelPolicy.Epoch;
@@ -703,7 +721,7 @@ namespace MovementPrototype {
                 using(var fresh=Native.CaptureClient(output.Target)) {
                     if(visual.Detect(fresh).Kind==ChromeKind.Battle || repelVisual.Find(fresh)!=bounds || VerifiedHeader.Signature(fresh,RepelPromptVisual.IdentityArea(bounds))!=signature) {Activity("REPEL: fresh dialog pixels changed; waiting for a stable read");repelPolicy.Confirm(null,clock.Elapsed.TotalSeconds);return;}
                 }
-                if(!controller.Running || run!=generation || epoch!=repelPolicy.Epoch || !output.Ready() || output.Busy() || clock.Elapsed.TotalSeconds-capturedAt>1)return;
+                if(!continueRepel.Checked || !controller.Running || run!=generation || epoch!=repelPolicy.Epoch || !output.Ready() || output.Busy() || clock.Elapsed.TotalSeconds-capturedAt>1)return;
                 Native.ClickClient(output.Target,output.Process,reading.Yes);
                 repelPolicy.Clicked(clock.Elapsed.TotalSeconds);repelClicks++;
                 Activity("REPEL: Yes requested for "+reading.Kind+"; request="+repelPolicy.Requests);
@@ -1157,6 +1175,7 @@ namespace MovementPrototype {
                 turnController.BeginTurn();turnController.Pause(false,.4);turnController.Tick(.4);Check(turnController.Held==Keys.Left,"Interrupted shared holds must remain balanced across turns");turnController.Emergency();
                 results.Add("PASS: short shared turns alternate their starting direction even when configured holds are interrupted");
                 results.AddRange(RepelPromptMatch.Tests());
+                results.Add(App.RepelDisabledTest());
                 results.AddRange(RepelRenewalPolicy.Tests());
                 bool leftShift=false, controlDown=false, rightShift=false;
                 var runShift=new RunAwayKey(delegate(Keys key,bool up) { rightShift=!up; });

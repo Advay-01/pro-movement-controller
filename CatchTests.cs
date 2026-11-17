@@ -89,6 +89,13 @@ namespace MovementPrototype {
             return result;
         }
         public static string Ocr() {
+            using(var title=new Bitmap(800,90))using(var g=Graphics.FromImage(title))using(var font=new Font("Segoe UI",18,FontStyle.Bold)) {
+                g.Clear(Color.FromArgb(55,55,59));g.DrawString("Advay",font,Brushes.White,20,20);g.DrawString("VS.",font,Brushes.Gold,170,20);g.DrawString("Wild Arbok",font,Brushes.White,240,20);g.Flush();
+                using(var mask=LocalOcr.RepelOcrImage(title,new Rectangle(Point.Empty,title.Size),true)) {
+                    var read=EncounterRecognition.Parse("[Encounter header]\n"+LocalOcr.Read(mask).GetAwaiter().GetResult()+"\n[Battle controls]\n\n[Full screen]\n");
+                    Check(read.Name=="arbok","gold/white contrast pass preserves exact Arbok identity and VS marker");Check(!RunButtonMatch.AllowsOpponent("arbok",read,EncounterRecognition.Targets("Arbok")),"contrast recognition must still protect Arbok when targeted");
+                }
+            }
             using(var image=new Bitmap(1000,800))using(var g=Graphics.FromImage(image))using(var font=new Font("Segoe UI",14,FontStyle.Bold)) {
                 g.Clear(Color.Black);g.DrawString("Advay VS. Wild Mimikyu",font,Brushes.White,180,60);g.DrawString("Smeargle",font,Brushes.White,430,500);
                 string[] names={"Soak","Spore","False Swipe","Mean Look"};

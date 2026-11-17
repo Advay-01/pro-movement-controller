@@ -62,6 +62,7 @@ PASS: short shared turns alternate their starting direction even when configured
 PASS: Repel renewal accepts only the exact expired/use-another prompt for Repel, Super Repel or Max Repel
 PASS: purchases, releases, unrelated items, chat/extra text and ambiguous/misaligned buttons never authorize Repel clicks
 PASS: cheap dialog geometry triggers a cropped read; ordinary world colors trigger no prompt OCR
+PASS: unchecked Repel releases movement and pauses on renewal dialog without scheduling item input
 PASS: Repel requires two recent matching prompt reads and blocks absent/stale evidence
 PASS: dialog disappearance, changed geometry and stop/focus reset invalidate pending renewal
 PASS: ignored Repel clicks retry only with fresh reads and stop after a bounded deadline

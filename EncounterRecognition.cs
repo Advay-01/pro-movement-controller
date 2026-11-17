@@ -34,13 +34,19 @@ namespace MovementPrototype {
             return result;
         }
         public static async Task<RunButtonCandidate> ReadBattle(Bitmap image,Rectangle heading,bool locateButton,Rectangle? menuBounds=null) {
-            if(locateButton)return await FindRunButton(image,heading,menuBounds);
-            using(var crop=EnlargeRectangle(image,heading)) {
-                var result=await Recognize(crop);
-                return new RunButtonCandidate {Header=TextOf(result),Controls="",IdentityBounds=CaptionBounds(result,heading,image.Size)};
+            RunButtonCandidate candidate;
+            if(locateButton)candidate=await FindRunButton(image,heading,menuBounds);
+            else using(var crop=EnlargeRectangle(image,heading)) {
+                var result=await Recognize(crop);candidate=new RunButtonCandidate {Header=TextOf(result),Controls="",IdentityBounds=CaptionBounds(result,heading,image.Size)};
             }
+            if(EncounterRecognition.Parse("[Encounter header]\n"+candidate.Header+"\n[Battle controls]\n\n[Full screen]\n").Name!=null)return candidate;
+            using(var mask=RepelOcrImage(image,heading,true)) {
+                var result=await Recognize(mask);string text=TextOf(result);
+                if(EncounterRecognition.Parse("[Encounter header]\n"+text+"\n[Battle controls]\n\n[Full screen]\n").Name!=null) {candidate.Header=text;candidate.IdentityBounds=CaptionBounds(result,heading,image.Size);}
+            }
+            return candidate;
         }
-        public static Bitmap RepelOcrImage(Bitmap image,Rectangle area) {
+        public static Bitmap RepelOcrImage(Bitmap image,Rectangle area,bool keepGold=false) {
             using(var mask=image.Clone(area,System.Drawing.Imaging.PixelFormat.Format32bppArgb)) {
                 var bits=mask.LockBits(new Rectangle(Point.Empty,mask.Size),System.Drawing.Imaging.ImageLockMode.ReadWrite,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
                 try {
@@ -50,7 +56,8 @@ namespace MovementPrototype {
                         System.Runtime.InteropServices.Marshal.Copy(pointer,row,0,row.Length);
                         for(int x=0;x<row.Length;x+=4) {
                             int min=Math.Min(row[x],Math.Min(row[x+1],row[x+2])),max=Math.Max(row[x],Math.Max(row[x+1],row[x+2]));
-                            byte value=(byte)(min>=140 && max-min<=90 ? 0 : 255);
+                            bool gold=keepGold && row[x+2]>=155 && row[x+1]>=95 && row[x+1]<=235 && row[x]<110 && row[x+2]>row[x+1]*1.05;
+                            byte value=(byte)((min>=140 && max-min<=90 || gold) ? 0 : 255);
                             row[x]=row[x+1]=row[x+2]=value;row[x+3]=255;
                         }
                         System.Runtime.InteropServices.Marshal.Copy(row,0,pointer,row.Length);

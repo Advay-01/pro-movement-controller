@@ -164,7 +164,7 @@ namespace MovementPrototype {
         bool hotkeys,latched,closing,pending;double startAt,nextHotkeys;string lastState="";
         readonly string logPath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"dual-activity.log");
         public DualApp() {
-            Text="Movement Controller v2.1.3 — two hunts";Font=new Font("Segoe UI",10);StartPosition=FormStartPosition.CenterScreen;
+            Text="Movement Controller v2.1.4 — two hunts";Font=new Font("Segoe UI",10);StartPosition=FormStartPosition.CenterScreen;
             var area=Screen.PrimaryScreen.WorkingArea;ClientSize=new Size(Math.Min(1320,area.Width-40),Math.Min(980,area.Height-70));MinimumSize=new Size(950,650);
             scheduler=new DualScheduler(new ISharedHunt[] {hunts[0],hunts[1]},new SharedDesktop(hunts));
             var top=new FlowLayoutPanel {Dock=DockStyle.Top,AutoSize=true,Padding=new Padding(10),WrapContents=true};
