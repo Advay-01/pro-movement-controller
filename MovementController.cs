@@ -364,7 +364,7 @@ namespace MovementPrototype {
             output.LeaseRequired=managedMode;
             controller = new Controller(output);
             output.RunKey=runKey;
-            Text="Movement Controller v2.1.5 — testing prototype";
+            Text="Movement Controller v2.1.6 — testing prototype";
             ClientSize=new Size(630,900); MinimumSize=new Size(650,780);
             Font=new Font("Segoe UI",10); StartPosition=FormStartPosition.CenterScreen;
             var flow=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false, Padding=new Padding(22), AutoScroll=true };
@@ -886,7 +886,7 @@ namespace MovementPrototype {
                     if(autoCatch.Checked && desiredNames.Contains(reading.Name)) {
                         if(reading.Name==stableName)stableCount++;else {stableName=reading.Name;stableCount=1;}
                         if(stableCount<2) {encounterStatus.Text="Target seen — confirming exact name before catching.";return;}
-                        BeginCatch(reading.Name);return;
+                        BeginCatch(reading.Name,headingArea,headerSignature);return;
                     }
                     StopForTarget(reading.Name);
                     return;

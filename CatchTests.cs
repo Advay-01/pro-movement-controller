@@ -72,9 +72,27 @@ namespace MovementPrototype {
             Check(s.Flow.Phase==CatchPhase.ConfirmWorld,"capture text required before resuming");var world=s.Frame(CatchView.World);world.Wild=false;s.Observe(world);Check(s.Flow.Active,"one unstable world cannot resume");world=s.Frame(CatchView.World);world.Wild=false;world.WorldStable=true;s.Observe(world);
             Check(s.Flow.Phase==CatchPhase.Complete && s.Flow.Resume && s.Flow.BallsUsed==1,"complete bounded swipe/ball/capture/world lifecycle");
             result.Add("PASS: configured False Swipe, one ball, exact capture acknowledgement and stable world complete the sequence; world alone cannot resume");
+            using(var image=new Bitmap(1000,800)) {
+                var cfg=Config();
+                var own=Text("Srneargle");
+                var frame=CatchVision.Parse(Text("Advay VS. Wild Mimikyu"),Text("Choose Pokemon"),own,
+                    Text(""),Text("Xatu","Smeargle"),new ChromeReading {Kind=ChromeKind.Battle},image,cfg,"mimikyu","False Swipe",1,1,0);
+                Check(frame.ActivePokemon=="Smeargle" && !CatchVision.OwnCaption(own,"Smeargle",image.Size).IsEmpty,
+                    "live rn-to-m OCR confusion resolves on the active catcher caption");
+                s=new Scenario(cfg);var party=s.Frame(CatchView.Party);party.ActivePokemon=frame.ActivePokemon;party.Ready=true;
+                Check(s.Observe(party).Kind==CatchActionKind.OpenFight,"already-active slot-two catcher skips switching from the open party menu");
+                using(var graphics=Graphics.FromImage(image))graphics.FillRectangle(Brushes.Lime,580,500,110,3);
+                var caption=BattleRegions.OwnNameplate(image,new Rectangle(540,410,220,140));
+                Check(caption.HasValue && caption.Value.Contains(585,485) && caption.Value.Bottom<=501,
+                    "active catcher fallback reads directly above the HP bar");
+            }
             s=new Scenario();s.Prepare();s.Throw();var previewFrame=s.Frame(CatchView.Success);
             previewFrame=CatchVision.Preview(Text("Mimikyu Lv2 PREVIEW X"),"mimikyu",previewFrame.Id,s.Now);
             var closePreview=s.Observe(previewFrame);Check(previewFrame.Success && closePreview!=null && closePreview.Kind==CatchActionKind.CloseSummary,"new exact capture preview closes after an owned ball throw");
+            Check(s.Flow.RetryUnsentNavigation(closePreview),"fresh capture preview can retry a close that was never sent");
+            var nextPreview=s.Frame(CatchView.Success);
+            nextPreview=CatchVision.Preview(Text("Mimikyu Lv2 PREVIEW X"),"mimikyu",nextPreview.Id,s.Now);
+            Check(s.Observe(nextPreview)!=null,"rejected preview pixels require a fresh close request");
             world=s.Frame(CatchView.World);world.Wild=false;world.WorldStable=true;s.Observe(world);Check(s.Flow.Phase==CatchPhase.Complete,"closed capture preview plus clear world resumes");
             var wrongPreview=CatchVision.Preview(Text("Ralts Lv2 PREVIEW X"),"mimikyu",1,0);Check(!wrongPreview.Success && wrongPreview.View==CatchView.Unknown,"wrong-species preview is not a clear world or capture confirmation");
             Check(!CatchVision.Preview(Text("Mimikyu Lv2"),"mimikyu",1,0).Success,"ordinary species text cannot confirm capture");
@@ -110,6 +128,12 @@ namespace MovementPrototype {
             Check(parsed.View==CatchView.Moves && parsed.Control(CatchActionKind.ChooseMove)!=null && parsed.Control(CatchActionKind.ChooseMove).Slot==3 && parsed.Control(CatchActionKind.ChooseMove).Remaining==30,"move OCR requires configured name, slot and PP");
             parsed=Parse(Text("unrelated text"),null,Text("Balls","Pokéball","x516"));Check(parsed.View==CatchView.BallList && parsed.Control(CatchActionKind.UseBall).Remaining==516,"observed accented ball label and stock");
             var compactBag=Text("Pokéball","158","Great Ball","x20","Choose Item");
+            Check(Parse(Text("58","Fight","Items","Pokemon","Run")).View!=CatchView.Moves,
+                "stray overlay digits cannot appear to open the move menu");
+            var compactMoves=Text("Soak","2020","Spore","1515","False Swipe","40140","Mean Look","515","Choose Attack","58");
+            var parsedMoves=Parse(compactMoves);
+            Check(parsedMoves.Control(CatchActionKind.ChooseMove)!=null && parsedMoves.Control(CatchActionKind.ChooseMove).Slot==3,
+                "stray digits below Choose Attack do not shift the move slots");
             compactBag.Rows[1].Bounds=new RectangleF(760,220,40,12);
             parsed=Parse(compactBag);Check(parsed.View==CatchView.BallList && parsed.Control(CatchActionKind.UseBall).Remaining==158,"battle Choose Item list accepts a scoped bare stock counter");
             compactBag.Rows[1].Bounds=new RectangleF(900,220,40,12);parsed=Parse(compactBag);
@@ -120,11 +144,25 @@ namespace MovementPrototype {
             s=new Scenario();s.Prepare();f=s.Frame(CatchView.BallList);f.Control(CatchActionKind.UseBall).Remaining=-1;
             Check(s.Observe(f)==null && s.Flow.Active && s.Flow.BallsUsed==0,"unreadable stock remains paused for fresh evidence");
             s.Step(CatchView.BallList,CatchActionKind.UseBall);
+            s.Step(CatchView.Busy);s.Step(CatchView.Commands,CatchActionKind.OpenBag);
+            f=s.Frame(CatchView.BallList);f.Control(CatchActionKind.UseBall).Remaining=-1;
+            var retryBall=s.Observe(f);
+            Check(retryBall!=null && retryBall.Kind==CatchActionKind.UseBall && s.Flow.BallsUsed==2,
+                "a confirmed first throw permits a bounded retry using its verified remaining stock");
+            s=new Scenario();s.Prepare();f=s.Frame(CatchView.BallList);
+            f.Control(CatchActionKind.UseBall).Remaining=-1;
+            f.Control(CatchActionKind.UseBall).ListedBattleItem=true;
+            var listedBall=s.Observe(f);
+            Check(listedBall!=null && listedBall.Kind==CatchActionKind.UseBall,
+                "the exact visible battle item can be used when only its stock count is unreadable");
             parsed=Parse(Text("unrelated text"),Text("Player: You caught a Mimikyu!"));Check(!parsed.Success,"chat-like prefix cannot be a capture acknowledgement");
             parsed=Parse(Text("unrelated text"),Text("You caught a Ralts!"));Check(!parsed.Success,"different captured species rejected");
             parsed=Parse(Text("unrelated text"),Text("Mimikyu was caught!"));Check(parsed.Success,"exact target capture text");
             parsed=Parse(Text("unrelated text"),Text("Mimikyu was successfully caught!"));Check(parsed.Success,"PRO successfully-caught wording");
             parsed=Parse(Text("unrelated text"),Text("Success! You caught Mimikyu!"));Check(parsed.Success,"observed live PRO success acknowledgement");
+            Check(CatchVision.CaptureMessage("Succo You caught Seedot!","seedot") &&
+                !CatchVision.CaptureMessage("Succo You caught Seedot!","sneasel"),
+                "the live OCR success-prefix error confirms only the exact target");
             parsed=Parse(Text("unrelated text"),Text("Ralts was successfully caught!"));Check(!parsed.Success,"successfully-caught wording still requires the exact target");
             parsed=Parse(Text("Fight Pokemon Items Run"));Check(parsed.Control(CatchActionKind.OpenFight)==null,"a line mentioning commands cannot replace the two-row control grid");
             result.Add("PASS: scoped OCR parses four move/PP anchors and accented ball names with stock; unrelated messages and other species cannot confirm a catch");
@@ -180,6 +218,15 @@ namespace MovementPrototype {
                 var frame=LocalOcr.ReadCatch(image,chrome,Config(),"seedot","False Swipe",3,10,0).GetAwaiter().GetResult();
                 Check(frame.View==CatchView.Commands && frame.Wild && frame.Opponent=="seedot" && frame.ActivePokemon=="Smeargle" && frame.Ready,"inset panel OCR uses panel-relative commands and own caption; "+CatchVision.Describe(frame)+"; box="+chrome.BattleBox+"; menu="+LocalOcr.ReadCatchRegion(image,BattleRegions.Menu(chrome,image.Size)).GetAwaiter().GetResult().Text);
                 var run=LocalOcr.ReadBattle(image,chrome.Header,true,BattleRegions.Menu(chrome,image.Size)).GetAwaiter().GetResult();Check(run.ClientPoint.HasValue && run.ItemsPoint.HasValue && run.ClientPoint.Value.X>740,"inset Run/Items pair maps to original client coordinates");
+                g.DrawString("Pokeball",font,Brushes.White,640,150);
+                g.DrawString("Choose Item",font,Brushes.White,640,300);
+                g.Flush();
+                var immediateBall=LocalOcr.ReadCatch(image,chrome,Config(),"seedot",null,0,19,0,false,true).GetAwaiter().GetResult();
+                var listed=immediateBall.Control(CatchActionKind.UseBall);
+                Check(immediateBall.Wild && immediateBall.Opponent=="seedot" && immediateBall.View==CatchView.BallList &&
+                    listed!=null && listed.ListedBattleItem && immediateBall.InputSeals.ContainsKey(CatchActionKind.UseBall),
+                    "fast item read verifies the wild target and exact ball entry without a second stock read");
+                g.FillRectangle(Brushes.Black,630,122,180,210);
                 using(var logFont=new Font("Segoe UI",10,FontStyle.Bold))g.DrawString("Seedot was caught!",logFont,Brushes.White,638,200);g.Flush();frame=LocalOcr.ReadCatch(image,chrome,Config(),"seedot",null,0,11,0).GetAwaiter().GetResult();Check(frame.Success,"inset capture message read from battle log rather than the world/chat area");
                 g.FillRectangle(Brushes.Black,630,122,180,210);g.FillRectangle(Brushes.Black,135,422,480,65);
                 using(var logFont=new Font("Segoe UI",11,FontStyle.Bold))g.DrawString("Seedot was successfully caught!",logFont,Brushes.White,145,450);g.Flush();

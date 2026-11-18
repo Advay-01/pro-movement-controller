@@ -37,6 +37,7 @@ namespace MovementPrototype {
     public enum CatchActionKind {OpenParty,ChooseCatcher,OpenFight,ChooseMove,OpenBag,OpenBalls,UseBall,CloseSummary}
     public sealed class CatchControl {
         public string Name;public Point Point;public int Slot,Remaining=-1;
+        public bool ListedBattleItem;
         public Rectangle Bounds;
     }
     public sealed class CatchFrame {
@@ -46,7 +47,7 @@ namespace MovementPrototype {
         public bool Wild,Ready,Success,Failure,WorldStable;
         public string Opponent,ActivePokemon,LeadPokemon,Message="",MessageKey="",FailureReason;
         public Dictionary<CatchActionKind,CatchControl> Controls=new Dictionary<CatchActionKind,CatchControl>();
-        public Rectangle HeaderSeal,OwnSeal;
+        public Rectangle HeaderSeal,OwnSeal,ResultArea;
         public string ReadDetail="";
         public Dictionary<CatchActionKind,string> InputSeals=new Dictionary<CatchActionKind,string>();
         public CatchControl Control(CatchActionKind kind) {CatchControl value;return Controls.TryGetValue(kind,out value) ? value : null;}
@@ -61,7 +62,8 @@ namespace MovementPrototype {
         public const double MaximumFrameAge=2.5;
         CatchConfig config;
         string species,oldMessage="";
-        int step,repeat,menuRequests;
+        int step,repeat,menuRequests,knownBallStock=-1;
+        int unsentMenuRetries;
         double began,pendingAt,unclearAt=-1,progressAt,resultWorldAt=-1;
         bool sawBusy,successSeen;
         long lastFrame=-1;
@@ -74,17 +76,25 @@ namespace MovementPrototype {
         public bool Resume {get{return config!=null && config.Resume;}}
         public bool Active {get{return Phase!=CatchPhase.Idle && Phase!=CatchPhase.Complete && Phase!=CatchPhase.Stopped;}}
         public bool WaitingAnimation {get{return Phase==CatchPhase.WaitMove || Phase==CatchPhase.WaitBall;}}
-        public void Reset() {Epoch++;Phase=CatchPhase.Idle;Status="Auto-catch idle";config=null;species=null;step=repeat=BallsUsed=menuRequests=0;successSeen=sawBusy=false;lastFrame=-1;pendingMenu=null;unclearAt=resultWorldAt=-1;}
+        public void Reset() {Epoch++;Phase=CatchPhase.Idle;Status="Auto-catch idle";config=null;species=null;step=repeat=BallsUsed=menuRequests=unsentMenuRetries=0;knownBallStock=-1;successSeen=sawBusy=false;lastFrame=-1;pendingMenu=null;unclearAt=resultWorldAt=-1;}
         public void Start(CatchConfig settings,string target,int confirmations,double now) {
             settings.Validate();if(confirmations<2 || String.IsNullOrEmpty(target))throw new InvalidOperationException("Two fresh exact target readings are required.");
             Reset();config=settings.Copy();species=target;began=progressAt=now;Phase=CatchPhase.SelectCatcher;Status="Target confirmed — selecting catcher";
         }
-        public void Suspend() {Epoch++;lastFrame=-1;unclearAt=-1;}
+        public void Suspend() {Epoch++;lastFrame=-1;unclearAt=-1;knownBallStock=-1;}
         public void Cancel(string reason) {Epoch++;Phase=CatchPhase.Stopped;Status=reason;pendingMenu=null;}
+        public bool RetryUnsentNavigation(CatchAction action) {
+            if(action==null || action.Epoch!=Epoch || pendingMenu!=action.Kind || ++unsentMenuRetries>4)return false;
+            pendingMenu=null;
+            Status="Waiting for the catching menu to settle";
+            return true;
+        }
+        public void NavigationSent() {unsentMenuRetries=0;}
         CatchAction Request(CatchActionKind kind,CatchControl control,CatchFrame frame,double now) {
             if(control==null)return null;
             if(++menuRequests>100) {Cancel("Stopped — catching navigation limit reached");return null;}
-            pendingMenu=kind;pendingAt=progressAt=now;
+            pendingMenu=kind;pendingAt=now;
+            if(kind!=CatchActionKind.CloseSummary)progressAt=now;
             return new CatchAction {Kind=kind,Point=control.Point,FrameId=frame.Id,Epoch=Epoch,Label=control.Name};
         }
         bool SameName(string a,string b) {return !String.IsNullOrEmpty(a) && EncounterRecognition.Normalize(a)==EncounterRecognition.Normalize(b);}
@@ -163,8 +173,10 @@ namespace MovementPrototype {
                 if(frame.View==CatchView.BallList) {
                     var ball=frame.Control(CatchActionKind.UseBall);
                     if(ball==null || !SameName(ball.Name,config.Ball))return null;
-                    if(ball.Remaining<0)return null;
                     if(ball.Remaining==0) {Cancel("Stopped — selected ball stock is exhausted");return null;}
+                    if(ball.Remaining>0)knownBallStock=knownBallStock<0 ? ball.Remaining : Math.Min(knownBallStock,ball.Remaining);
+                    if(knownBallStock==0 || knownBallStock<0 && !ball.ListedBattleItem)return null;
+                    if(knownBallStock>0)knownBallStock--;
                     BallsUsed++;pendingAt=progressAt=now;oldMessage=frame.MessageKey;sawBusy=false;Phase=CatchPhase.WaitBall;pendingMenu=null;
                     return new CatchAction {Kind=CatchActionKind.UseBall,Point=ball.Point,FrameId=frame.Id,Epoch=Epoch,Label=ball.Name};
                 }

@@ -1,5 +1,11 @@
 # Changes
 
+## v2.1.6
+
+Recognizes the active catcher from the battle caption when a fainted lead leaves the catcher already on the field. Ignores overlay numbers outside the move list and checks the verified battle panel for the result after a throw.
+
+The in-battle ball path reads the target and exact ball entry without waiting on unrelated OCR or repeating the stock read. The configured throw limit and battle acknowledgement still apply.
+
 ## v2.1.5
 
 Fixes live auto-catching: open submenus retain battle detection, scoped catcher OCR tolerates a unique missing letter, tiny PP counters require an unambiguous current/total pair, and the compact Choose Item list supports aligned ball stock. Navigation also works when a submenu was already open. Initial slow reads retry within a bound; fresh target/catcher/control pixel checks exclude unrelated scenery and header artwork.

@@ -173,6 +173,31 @@ namespace MovementPrototype {
             if(!chrome.BattleBox.HasValue)return new Rectangle((int)(image.Width*.40),(int)(image.Height*.45),(int)(image.Width*.33),(int)(image.Height*.34));
             var b=chrome.BattleBox.Value;return Clip(new Rectangle(b.Left+(int)(b.Width*.42),b.Top+(int)(b.Width*.33),(int)(b.Width*.31),(int)(b.Width*.20)),image);
         }
+        static bool HealthGreen(Color pixel) {
+            return pixel.G>=135 && pixel.G-pixel.R>=95 && pixel.G-pixel.B>=95;
+        }
+        public static Rectangle? OwnNameplate(Bitmap image,Rectangle area,bool fromRight=false) {
+            // The green HP bar provides a stable anchor even on bright battle scenery.
+            int minimumRun=Math.Max(18,area.Width/5);
+            for(int y=area.Bottom-2;y>=area.Top+12;y--) {
+                int run=0;
+                for(int x=area.Left;x<=area.Right;x++) {
+                    var pixel=x<area.Right ? image.GetPixel(x,y) : Color.Black;
+                    if(HealthGreen(pixel)) {run++;continue;}
+                    int left=x-run;
+                    bool longEnough=run>=minimumRun;
+                    run=0;
+                    if(!longEnough)continue;
+                    // PRO's green fill can start farther right as HP drops.
+                    // The far edge still anchors the full nameplate width.
+                    if(fromRight)left=x-(int)Math.Round(area.Width*.68);
+                    if(left<area.Left+area.Width/10 || left>area.Right-area.Width/4)continue;
+                    int height=Math.Max(15,(int)(area.Width*.12));
+                    return Clip(Rectangle.FromLTRB(left-4,y-height,left+Math.Max(72,area.Width/3),y-1),image.Size);
+                }
+            }
+            return null;
+        }
         public static Rectangle Log(ChromeReading chrome,Size image) {
             if(!chrome.BattleBox.HasValue)return new Rectangle(0,(int)(image.Height*.70),(int)(image.Width*.63),(int)(image.Height*.29));
             var b=chrome.BattleBox.Value;return Clip(new Rectangle(b.Left+(int)(b.Width*.74)+3,chrome.Header.Bottom+2,(int)(b.Width*.24)-3,(int)(b.Width*.30)),image);

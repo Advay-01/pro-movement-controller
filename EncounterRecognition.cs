@@ -164,7 +164,7 @@ namespace MovementPrototype {
                 return region;
             }
         }
-        public static async Task<CatchFrame> ReadCatch(Bitmap image,ChromeReading chrome,CatchConfig config,string species,string move,int slot,long id,double at,bool partyNeeded=true) {
+        public static async Task<CatchFrame> ReadCatch(Bitmap image,ChromeReading chrome,CatchConfig config,string species,string move,int slot,long id,double at,bool partyNeeded=true,bool selectingBall=false,Rectangle? verifiedCaption=null) {
             if(chrome.Kind==ChromeKind.Clear && !chrome.BattleBox.HasValue) {
                 var area=new Rectangle((int)(image.Width*.60),(int)(image.Height*.32),(int)(image.Width*.35),(int)(image.Height*.19));
                 var preview=await ReadCatchRegion(image,area);var world=CatchVision.Preview(preview,species,id,at);world.ReadDetail=preview.Text;
@@ -182,36 +182,75 @@ namespace MovementPrototype {
             var logArea=BattleRegions.Log(chrome,image.Size);
             var leadArea=new Rectangle(0,0,(int)(image.Width*.15),(int)(image.Height*.53));
             var empty=Task.FromResult(new CatchTextRegion());
-            var regions=await Task.WhenAll(ReadCatchRegion(image,headerArea),ReadCatchRegion(image,menuArea,!String.IsNullOrEmpty(move)),ReadCatchRegion(image,ownArea),ReadCatchRegion(image,logArea),partyNeeded ? ReadCatchRegion(image,leadArea) : empty,chrome.BattleBox.HasValue ? empty : ReadCatchRegion(image,bagArea),ReadCatchRegion(image,BattleRegions.BottomLog(chrome,image.Size)));
+            var regions=await Task.WhenAll(
+                verifiedCaption.HasValue
+                    ? Task.FromResult(new CatchTextRegion {Text="VS. Wild "+species})
+                    : ReadCatchRegion(image,headerArea),
+                ReadCatchRegion(image,menuArea,selectingBall || !String.IsNullOrEmpty(move)),
+                selectingBall ? empty : ReadCatchRegion(image,ownArea),
+                selectingBall ? empty : ReadCatchRegion(image,logArea),
+                partyNeeded ? ReadCatchRegion(image,leadArea) : empty,
+                chrome.BattleBox.HasValue ? empty : ReadCatchRegion(image,bagArea),
+                selectingBall ? empty : ReadCatchRegion(image,BattleRegions.BottomLog(chrome,image.Size)));
             regions[3].Text+="\n"+regions[6].Text;
             if(EncounterRecognition.Parse("[Encounter header]\n"+regions[0].Text+"\n[Battle controls]\n\n[Full screen]\n").Name==null) {
                 var sharp=await ReadCatchRegion(image,headerArea,false,true);
                 if(EncounterRecognition.Parse("[Encounter header]\n"+sharp.Text+"\n[Battle controls]\n\n[Full screen]\n").Name!=null)regions[0]=sharp;
+                else regions[0]=await ReadCatchRegion(image,headerArea,true);
             }
             if(Regex.IsMatch(regions[1].Text,@"Choose\s*Attack",RegexOptions.IgnoreCase)) {
                 foreach(var row in regions[1].Rows)row.Text=Regex.Replace(row.Text,@"(\d{1,2})\s*[/\\'’.,:]\s*(\d{1,2})","$1/$2");
             }
             bool compactItems=Regex.IsMatch(regions[1].Text,@"Choose\s*Item",RegexOptions.IgnoreCase);
+            // The read-only check uses high contrast and can see counts that
+            // disappear in the normal read once the move sequence is complete.
+            if(!selectingBall && compactItems && CatchVision.StockArea(regions[1],config.Ball,image.Size,true).HasValue) {
+                var itemContrast=await ReadCatchRegion(image,menuArea,true);
+                if(Regex.IsMatch(itemContrast.Text,@"Choose\s*Item",RegexOptions.IgnoreCase))
+                    regions[1]=itemContrast;
+            }
             var stockRegion=compactItems ? regions[1] : regions[5];
-            var stockArea=CatchVision.StockArea(stockRegion,config.Ball,image.Size,compactItems);
+            var stockArea=selectingBall && compactItems ? null : CatchVision.StockArea(stockRegion,config.Ball,image.Size,compactItems);
             if(stockArea.HasValue) {
-                var count=await ReadCatchRegion(image,stockArea.Value,false,compactItems);
+                var count=await ReadCatchRegion(image,stockArea.Value);
                 stockRegion.Rows.AddRange(count.Rows);
                 stockRegion.Text+="\n"+count.Text;
+                if(compactItems && CatchVision.StockArea(stockRegion,config.Ball,image.Size,true).HasValue) {
+                    var sharpCount=await ReadCatchRegion(image,stockArea.Value,false,true);
+                    stockRegion.Rows.AddRange(sharpCount.Rows);
+                    stockRegion.Text+="\n"+sharpCount.Text;
+                }
                 if(compactItems && CatchVision.StockArea(stockRegion,config.Ball,image.Size,true).HasValue) {
                     var contrastCount=await ReadCatchRegion(image,stockArea.Value,true);
                     stockRegion.Rows.AddRange(contrastCount.Rows);
                     stockRegion.Text+="\n"+contrastCount.Text;
                 }
             }
-            if(!String.IsNullOrWhiteSpace(config.Catcher) && CatchVision.OwnCaption(regions[2],config.Catcher,image.Size).IsEmpty) {
-                var ownContrast=await ReadCatchRegion(image,ownArea,true);regions[2].Text+="\n"+ownContrast.Text;regions[2].Rows.AddRange(ownContrast.Rows);
+            if(!selectingBall && !String.IsNullOrWhiteSpace(config.Catcher) && CatchVision.OwnCaption(regions[2],config.Catcher,image.Size).IsEmpty) {
+                var caption=BattleRegions.OwnNameplate(image,ownArea);
+                var fallback=await ReadCatchRegion(image,caption ?? ownArea);
+                if(CatchVision.OwnCaption(fallback,config.Catcher,image.Size).IsEmpty) {
+                    var fromRight=BattleRegions.OwnNameplate(image,ownArea,true);
+                    if(fromRight.HasValue && fromRight!=caption) {
+                        var anchored=await ReadCatchRegion(image,fromRight.Value);
+                        if(!CatchVision.OwnCaption(anchored,config.Catcher,image.Size).IsEmpty)fallback=anchored;
+                    }
+                }
+                if(CatchVision.OwnCaption(fallback,config.Catcher,image.Size).IsEmpty && caption.HasValue)
+                    fallback=await ReadCatchRegion(image,caption.Value,false,true);
+                if(CatchVision.OwnCaption(fallback,config.Catcher,image.Size).IsEmpty)
+                    fallback=await ReadCatchRegion(image,caption ?? ownArea,true);
+                if(CatchVision.OwnCaption(fallback,config.Catcher,image.Size).IsEmpty && caption.HasValue)
+                    fallback=await ReadCatchRegion(image,ownArea,true);
+                regions[2].Text+="\n"+fallback.Text;
+                regions[2].Rows.AddRange(fallback.Rows);
             }
             var frame=CatchVision.Parse(regions[0],regions[1],regions[2],regions[3],regions[4],chrome,image,config,species,move,slot,id,at,regions[5]);
             CatchVision.AddNavigation(frame,regions[1],image);
-            frame.HeaderSeal=CatchVision.WildCaption(regions[0],image.Size,headerArea);frame.OwnSeal=CatchVision.OwnCaption(regions[2],config.Catcher,image.Size);
-            if(frame.OwnSeal.IsEmpty)frame.OwnSeal=ownArea;
-            frame.ReadDetail=String.Join(" | ",regions[1].Rows.ConvertAll(r=>r.Text));
+            frame.HeaderSeal=verifiedCaption ?? CatchVision.WildCaption(regions[0],image.Size,headerArea);frame.OwnSeal=CatchVision.OwnCaption(regions[2],config.Catcher,image.Size);
+            if(frame.OwnSeal.IsEmpty && !selectingBall)frame.OwnSeal=ownArea;
+            var moveDetails=regions[1].Rows.FindAll(r=>Regex.IsMatch(r.Text.Trim(),@"^[0-9x× /'.,:]+$",RegexOptions.IgnoreCase));
+            frame.ReadDetail=String.Join(" | ",moveDetails.ConvertAll(r=>r.Text))+" [Active caption] "+regions[2].Text.Replace('\n',' ');
             foreach(var kind in frame.Controls.Keys)frame.InputSeals[kind]=CatchVision.InputSeal(image,frame,kind);
             return frame;
         }
