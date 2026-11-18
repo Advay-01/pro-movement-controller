@@ -364,7 +364,7 @@ namespace MovementPrototype {
             output.LeaseRequired=managedMode;
             controller = new Controller(output);
             output.RunKey=runKey;
-            Text="Movement Controller v2.1.4 — testing prototype";
+            Text="Movement Controller v2.1.5 — testing prototype";
             ClientSize=new Size(630,900); MinimumSize=new Size(650,780);
             Font=new Font("Segoe UI",10); StartPosition=FormStartPosition.CenterScreen;
             var flow=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false, Padding=new Padding(22), AutoScroll=true };
@@ -842,6 +842,7 @@ namespace MovementPrototype {
                 if(candidate!=null) {reading.Battle=true;reading.Overworld=false;}
                 string summary="Reading: "+(reading.Battle ? "battle" : reading.Overworld ? "overworld" : "unclear")+"; species="+(reading.Name ?? "unknown")+"; buttons="+reading.Commands;
                 if(summary!=lastReadingSummary) { Activity(summary+"; OCR="+Math.Round((clock.Elapsed.TotalSeconds-capturedAt)*1000)+"ms"); lastReadingSummary=summary; }
+                if(candidate!=null && reading.Name==null)Activity("UNREADABLE HEADER: "+candidate.Header.Replace('\n',' ')+"; area="+frameChrome.Header+"; box="+frameChrome.BattleBox);
                 if(previewOnly) {
                     string sceneCheck="scene="+previewScene.Kind+"; HUD rows="+previewScene.HudRows+"; sprites="+previewScene.ColorRows+"; client="+frameWidth+"x"+frameHeight;
                     Activity("SCENE CHECK: "+sceneCheck+"; "+visual.HudDiagnostic);

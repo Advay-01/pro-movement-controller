@@ -15,6 +15,19 @@ namespace MovementPrototype {
         public string Text="";public List<CatchTextRow> Rows=new List<CatchTextRow>();
     }
     public static class CatchVision {
+        public static void AddNavigation(CatchFrame frame,CatchTextRegion menu,Bitmap image) {
+            if(!frame.Wild)return;var fight=Unique(menu,"Fight");var items=Unique(menu,"Items");var run=Unique(menu,"Run");
+            if(fight==null || items==null || run==null)return;
+            var f=Center(fight.Bounds);var i=Center(items.Bounds);var r=Center(run.Bounds);
+            if(Math.Abs(f.X-i.X)>image.Width*.035 || r.X-i.X<image.Width*.025 || Math.Abs(r.Y-i.Y)>image.Height*.025)return;
+            frame.Ready=BattleControlReady.Read(image,r,i)==ControlReady.Ready;
+            if(frame.Ready) {Put(frame,CatchActionKind.OpenFight,Control(fight,"Fight"));Put(frame,CatchActionKind.OpenBag,Control(items,"Items"));}
+        }
+        public static string InputSeal(Bitmap image,CatchFrame frame,CatchActionKind kind) {
+            var control=frame.Control(kind);if(control==null)return null;
+            var area=control.Bounds.IsEmpty ? new Rectangle(control.Point.X-25,control.Point.Y-12,50,24) : control.Bounds;area.Intersect(new Rectangle(Point.Empty,image.Size));
+            return VerifiedHeader.Signature(image,frame.HeaderSeal)+VerifiedHeader.Signature(image,frame.OwnSeal)+VerifiedHeader.Signature(image,area);
+        }
         static string Fold(string text) {return EncounterRecognition.Normalize((text ?? "").Replace('é','e').Replace('É','E'));}
         static bool Has(string text,string name) {return !String.IsNullOrWhiteSpace(name) && Regex.IsMatch(text ?? "",@"(?<![A-Za-z])"+Regex.Escape(name)+@"(?![A-Za-z])",RegexOptions.IgnoreCase);}
         static CatchTextRow Unique(CatchTextRegion region,string label) {
@@ -33,11 +46,32 @@ namespace MovementPrototype {
             return found.Count==1 ? found[0] : null;
         }
         static Point Center(RectangleF r) {return new Point((int)(r.Left+r.Width/2),(int)(r.Top+r.Height/2));}
-        static int Quantity(string text,bool pp=false) {
+        static int Quantity(string text,bool pp=false,bool bare=false) {
+            if(pp)return MovePp(text);
+            int number;if(bare && Regex.IsMatch(text ?? "",@"^\s*\d{1,5}\s*$") && Int32.TryParse(text.Trim(),out number))return number;
             var match=Regex.Match(text ?? "",pp ? @"(?:\bPP\s*[:=]?\s*)?(\d+)\s*/\s*\d+" : @"(?:[x×]\s*|\bquantity\s*[:=]?\s*)(\d+)\b",RegexOptions.IgnoreCase);
             int value;return match.Success && Int32.TryParse(match.Groups[1].Value,out value) ? value : -1;
         }
-        static CatchControl Control(CatchTextRow row,string name,int slot=0,int remaining=-1) {return row==null ? null : new CatchControl {Name=name,Point=Center(row.Bounds),Slot=slot,Remaining=remaining};}
+        // Pixel-font '/' is sometimes read as '1' or omitted. Accept a compact
+        // counter only when it has one possible current/total pair (0..99).
+        public static int MovePp(string text) {
+            var normal=Regex.Match(text ?? "",@"(?:\bPP\s*[:=]?\s*)?(\d{1,2})\s*[/\\'’.,:]\s*(\d{1,2})(?!\d)",RegexOptions.IgnoreCase);
+            if(normal.Success) {int current=Int32.Parse(normal.Groups[1].Value),total=Int32.Parse(normal.Groups[2].Value);return total>0 && current<=total ? current : -1;}
+            string compact=Regex.Replace(text ?? "",@"\s","");if(!Regex.IsMatch(compact,@"^\d{2,5}$"))return -1;
+            var pairs=new HashSet<string>();int remaining=-1;
+            for(int left=1;left<=2 && left<compact.Length;left++)for(int separator=0;separator<=1;separator++) {
+                int right=left+separator;if(right>=compact.Length || compact.Length-right>2 || separator==1 && compact[left]!='1')continue;
+                string a=compact.Substring(0,left),b=compact.Substring(right);if(a.Length>1 && a[0]=='0' || b.Length>1 && b[0]=='0')continue;
+                int current=Int32.Parse(a),total=Int32.Parse(b);if(total<1 || current>total)continue;
+                pairs.Add(current+"/"+total);remaining=current;
+            }
+            return pairs.Count==1 ? remaining : -1;
+        }
+        static CatchControl Control(CatchTextRow row,string name,int slot=0,int remaining=-1,CatchTextRow counter=null) {
+            if(row==null)return null;var bounds=Rectangle.Inflate(Rectangle.Ceiling(row.Bounds),2,2);
+            if(counter!=null)bounds=Rectangle.Union(bounds,Rectangle.Inflate(Rectangle.Ceiling(counter.Bounds),2,2));
+            return new CatchControl {Name=name,Point=Center(row.Bounds),Bounds=bounds,Slot=slot,Remaining=remaining};
+        }
         static void Put(CatchFrame frame,CatchActionKind kind,CatchControl control) {if(control!=null)frame.Controls[kind]=control;}
         static CatchTextRow Near(CatchTextRegion menu,CatchTextRow label,Func<string,bool> predicate) {
             var rows=menu.Rows.FindAll(r=>predicate(r.Text) && Math.Abs(r.Bounds.Top-label.Bounds.Top)<70 && Math.Abs(r.Bounds.Left-label.Bounds.Left)<180);
@@ -45,7 +79,7 @@ namespace MovementPrototype {
             return rows.Count>0 ? rows[0] : null;
         }
         static CatchTextRow Stock(CatchTextRegion region,CatchTextRow label) {
-            var rows=region.Rows.FindAll(r=>Quantity(r.Text)>=0 && Math.Abs(r.Bounds.Left-label.Bounds.Left)<=Math.Max(14,label.Bounds.Height) && r.Bounds.Top>=label.Bounds.Top-3 && r.Bounds.Top-label.Bounds.Bottom<=Math.Max(24,label.Bounds.Height*2.5));
+            var rows=region.Rows.FindAll(r=>Quantity(r.Text,false,true)>=0 && Math.Abs(r.Bounds.Left-label.Bounds.Left)<=Math.Max(14,label.Bounds.Height) && r.Bounds.Top>=label.Bounds.Top-3 && r.Bounds.Top-label.Bounds.Bottom<=Math.Max(24,label.Bounds.Height*2.5));
             return rows.Count==1 ? rows[0] : null;
         }
         static readonly List<string> Species=LoadSpecies();
@@ -54,14 +88,62 @@ namespace MovementPrototype {
             return File.Exists(path) ? File.ReadAllLines(path).Where(x=>x.Trim().Length>0).OrderByDescending(x=>x.Length).ToList() : new List<string>();
         }
         static string SpeciesIn(string text) {foreach(string name in Species)if(Has(text,name))return name;return null;}
-        public static Rectangle? StockArea(CatchTextRegion bag,string ball,Size image) {
+        static bool OneEdit(string a,string b) {
+            if(Math.Abs(a.Length-b.Length)>1)return false;int i=0,j=0,edits=0;
+            while(i<a.Length && j<b.Length) {if(a[i]==b[j]) {i++;j++;continue;}if(++edits>1)return false;if(a.Length>=b.Length)i++;if(b.Length>=a.Length)j++;}
+            return edits+(a.Length-i)+(b.Length-j)<=1;
+        }
+        static bool OwnName(string text,string wanted) {
+            if(Has(text,wanted))return true;string desired=Fold(wanted);if(desired.Length<5)return false;
+            foreach(Match word in Regex.Matches(text ?? "",@"[A-Za-z]+")) {
+                string token=Fold(word.Value);if(Species.Any(n=>Fold(n)==token))continue;
+                var matches=Species.Where(n=>OneEdit(Fold(n),token)).Select(Fold).Distinct().ToList();
+                if(matches.Count==1 && matches[0]==desired)return true;
+            }return false;
+        }
+        public static Rectangle OwnCaption(CatchTextRegion own,string wanted,Size size) {
+            Rectangle result=Rectangle.Empty;
+            foreach(var row in own.Rows)if(OwnName(row.Text,wanted)) {
+                foreach(var word in row.Words)if(OwnName(word.Text,wanted)) {
+                    var box=Rectangle.Inflate(Rectangle.Ceiling(word.Bounds),2,2);result=result.IsEmpty ? box : Rectangle.Union(result,box);
+                }
+            }
+            result.Intersect(new Rectangle(Point.Empty,size));return result;
+        }
+        public static Rectangle WildCaption(CatchTextRegion header,Size size,Rectangle fallback) {
+            var rows=header.Rows.Where(r=>Regex.IsMatch(r.Text,@"\bWild\b",RegexOptions.IgnoreCase)).ToList();
+            if(rows.Count!=1)return fallback;
+            var box=Rectangle.Inflate(Rectangle.Ceiling(rows[0].Bounds),2,2);box.Intersect(new Rectangle(Point.Empty,size));return box;
+        }
+        public static CatchFrame Preview(CatchTextRegion region,string expected,long id,double at) {
+            var frame=new CatchFrame {Id=id,CapturedAt=at,View=CatchView.World};
+            var marker=Unique(region,"PREVIEW");var species=String.IsNullOrEmpty(expected) ? null : Unique(region,expected);
+            if(marker!=null)frame.View=CatchView.Unknown;
+            if(marker==null || species==null || Math.Abs(marker.Bounds.Top-species.Bounds.Top)>Math.Max(8,marker.Bounds.Height))return frame;
+            frame.Success=true;frame.Opponent=expected;frame.View=CatchView.Success;
+            frame.Message=frame.MessageKey=expected+" capture PREVIEW";
+            frame.HeaderSeal=Rectangle.Inflate(Rectangle.Ceiling(RectangleF.Union(marker.Bounds,species.Bounds)),2,2);frame.OwnSeal=frame.HeaderSeal;
+            var close=Unique(region,"X");
+            if(close!=null && close.Bounds.Left>marker.Bounds.Right && Math.Abs(close.Bounds.Top-marker.Bounds.Top)<=Math.Max(8,marker.Bounds.Height))Put(frame,CatchActionKind.CloseSummary,Control(close,"Captured Pokémon preview"));
+            return frame;
+        }
+        public static Rectangle? StockArea(CatchTextRegion bag,string ball,Size image,bool compact=false) {
             var label=Unique(bag,ball);if(label==null)return null;
             var stock=Stock(bag,label);if(stock!=null)return null;
-            var bounds=Rectangle.FromLTRB((int)label.Bounds.Left-5,(int)label.Bounds.Bottom+1,(int)(label.Bounds.Left+Math.Max(90,label.Bounds.Width)),(int)(label.Bounds.Bottom+Math.Max(28,label.Bounds.Height*2.5)));
+            // In battle, the count is directly below the ball name. Keep the
+            // retry above the next item so its count cannot be mistaken for ours.
+            var bounds=Rectangle.FromLTRB((int)label.Bounds.Left-5,
+                (int)Math.Floor(label.Bounds.Bottom)+(compact ? -1 : 1),
+                (int)Math.Ceiling(label.Bounds.Left+Math.Max(compact ? 48 : 90,label.Bounds.Width)),
+                (int)Math.Ceiling(label.Bounds.Bottom+Math.Max(compact ? 17 : 28,label.Bounds.Height*(compact ? 1.5 : 2.5))));
             bounds.Intersect(new Rectangle(Point.Empty,image));return bounds.Width>0 && bounds.Height>0 ? (Rectangle?)bounds : null;
         }
         static List<CatchTextRow> HudParty(CatchTextRegion hud,CatchConfig config) {
             return hud.Rows.Where(r=>SpeciesIn(r.Text)!=null || Has(r.Text,config.Catcher) || Has(r.Text,config.ExpectedLead)).OrderBy(r=>r.Bounds.Top).ToList();
+        }
+        public static string LeadName(CatchTextRegion hud,CatchConfig config,Size image) {
+            var rows=HudParty(hud,config);
+            return !String.IsNullOrWhiteSpace(config.ExpectedLead) && rows.Count>0 && FirstHudRow(rows[0],image) && Has(rows[0].Text,config.ExpectedLead) ? config.ExpectedLead : null;
         }
         static bool FirstHudRow(CatchTextRow row,Size image) {return row.Bounds.Top<image.Height*.09 && row.Bounds.Top<=Math.Max(20,row.Bounds.Height*4);}
         public static Point PartyIcon(Rectangle box,int slot) {
@@ -90,25 +172,31 @@ namespace MovementPrototype {
             var frame=new CatchFrame {Id=id,CapturedAt=capturedAt};
             var reading=EncounterRecognition.Parse("[Encounter header]\n"+header.Text+"\n[Battle controls]\n\n[Full screen]\n");
             frame.Opponent=reading.Name;frame.Wild=reading.Battle && !reading.Ambiguous && reading.Name!=null;
-            frame.ActivePokemon=Has(own.Text,config.Catcher) ? config.Catcher : null;
+            frame.ActivePokemon=OwnName(own.Text,config.Catcher) ? config.Catcher : null;
             var hudParty=HudParty(lead,config);
             frame.LeadPokemon=!String.IsNullOrWhiteSpace(config.ExpectedLead) && hudParty.Count>0 && FirstHudRow(hudParty[0],image.Size) && Has(hudParty[0].Text,config.ExpectedLead) ? config.ExpectedLead : null;
             frame.Message=log.Text;frame.MessageKey=log.Text;
             string target=Regex.Escape(expected ?? "");
             bool trainer=Regex.IsMatch(header.Text ?? "",@"\bVS\b",RegexOptions.IgnoreCase) && !Regex.IsMatch(header.Text ?? "",@"\bWild\b",RegexOptions.IgnoreCase);
-            bool success=!trainer && !String.IsNullOrEmpty(expected) && Regex.IsMatch(log.Text ?? "",@"(?:^|\n)\s*(?:Gotcha[!.,]?\s*)?(?:(?:Wild\s+)?"+target+@"\s+(?:was|has been)\s+caught[!.]?|You\s+(?:have\s+)?caught\s+(?:a\s+)?"+target+@"[!.]?)\s*(?:$|\n)",RegexOptions.IgnoreCase);
+            bool success=!trainer && !String.IsNullOrEmpty(expected) && Regex.IsMatch(log.Text ?? "",@"(?:^|\n)\s*(?:(?:Gotcha|Success)[!.,]?\s*)?(?:(?:Wild\s+)?"+target+@"\s+(?:was|has been)\s+(?:successfully\s+)?caught[!.]?|You\s+(?:have\s+)?caught\s+(?:a\s+)?"+target+@"[!.]?)\s*(?:$|\n)",RegexOptions.IgnoreCase);
             if(success) {frame.Success=true;frame.Opponent=expected;frame.View=CatchView.Success;}
             if(Regex.IsMatch(log.Text ?? "",@"\b(fainted|no pp left|not enough pp|doesn.t affect|had no effect|no effect on|no .+balls left|can.t use that|cannot use that|attack missed|ran away|fled from battle)\b",RegexOptions.IgnoreCase)) {frame.Failure=true;frame.FailureReason="battle reported a failed action, fainting or escape";}
             // The backpack can overlay the battle without hiding the command buttons.
+            var battleBall=Unique(menu,config.Ball);
+            if(frame.Wild && battleBall!=null && Unique(menu,"Choose Item")!=null) {
+                var quantity=Stock(menu,battleBall);int stock=quantity==null ? -1 : Quantity(quantity.Text,false,true);
+                frame.View=CatchView.BallList;Put(frame,CatchActionKind.UseBall,Control(battleBall,config.Ball,0,stock,quantity));return frame;
+            }
             var ballRegion=bag ?? menu;var ball=Unique(ballRegion,config.Ball);
             if(frame.Wild && ball!=null && Unique(ballRegion,"Balls")!=null) {
-                var quantity=Stock(ballRegion,ball);int stock=quantity==null ? -1 : Quantity(quantity.Text);
-                frame.View=CatchView.BallList;Put(frame,CatchActionKind.UseBall,Control(ball,config.Ball,0,stock));return frame;
+                var quantity=Stock(ballRegion,ball);int stock=quantity==null ? -1 : Quantity(quantity.Text,false,true);
+                frame.View=CatchView.BallList;Put(frame,CatchActionKind.UseBall,Control(ball,config.Ball,0,stock,quantity));return frame;
             }
             if(frame.Wild && ReadIconParty(frame,menu,lead,chrome,image,config))return frame;
             if(frame.Wild) {
-            var ppRows=menu.Rows.FindAll(r=>Quantity(r.Text,true)>=0);
-            if(ppRows.Count>=1 || Unique(menu,"Choose Move")!=null) {
+            bool attackMenu=Unique(menu,"Choose Attack")!=null;
+            var ppRows=menu.Rows.FindAll(r=>Quantity(r.Text,true)>=0 || attackMenu && Regex.IsMatch(r.Text.Trim(),@"^\d{2,5}$"));
+            if(ppRows.Count>=1 || Unique(menu,"Choose Move")!=null || Unique(menu,"Choose Attack")!=null) {
                 frame.View=CatchView.Moves;
                 var name=String.IsNullOrEmpty(wantedMove) ? null : Unique(menu,wantedMove);
                 if(name!=null) {
@@ -123,7 +211,7 @@ namespace MovementPrototype {
                             if(grid)anchors=upper.Concat(lower).ToList();
                         }
                         int slot=anchors.IndexOf(pp)+1;
-                        if(anchors.Count==4 && slot==wantedSlot)Put(frame,CatchActionKind.ChooseMove,Control(name,wantedMove,slot,Quantity(pp.Text,true)));
+                        if(anchors.Count==4 && slot==wantedSlot)Put(frame,CatchActionKind.ChooseMove,Control(name,wantedMove,slot,Quantity(pp.Text,true),pp));
                     }
                 }
                 return frame;

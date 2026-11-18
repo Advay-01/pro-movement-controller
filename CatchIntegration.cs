@@ -16,6 +16,9 @@ namespace MovementPrototype {
         bool catchDialogOpen,catchPreviewPending,catchBusy,catchInputPending;
         double nextCatchScan;
         long catchFrameId;
+        int slowCatchReads;
+        string lastCatchView="";
+        string lastCatchMessage="";
         string TargetKey() {
             var names=new List<string>(EncounterRecognition.Targets(targetNames.Text));names.Sort(StringComparer.Ordinal);
             return String.Join(", ",names);
@@ -50,7 +53,8 @@ namespace MovementPrototype {
         }
         void BeginCatch(string species) {
             ValidateCatch();ReleaseEscape();controller.Pause(true,clock.Elapsed.TotalSeconds);ResetControls();
-            catchFlow.Start(catchConfig,species,stableCount,clock.Elapsed.TotalSeconds);catchWorld.Reset();catchBusy=false;nextCatchScan=0;
+            catchFlow.Start(catchConfig,species,stableCount,clock.Elapsed.TotalSeconds);catchWorld.Reset();catchBusy=false;nextCatchScan=0;slowCatchReads=0;
+            lastCatchMessage="";
             Activity("CATCH: started for "+species+"; bounded recipe; ball limit="+catchConfig.MaximumBalls);
             encounterStatus.Text=catchFlow.Status;
             NotifyCatch("Target found",species+" — configured catch sequence starting.");
@@ -64,7 +68,7 @@ namespace MovementPrototype {
             double at=clock.Elapsed.TotalSeconds;
             using(var image=Native.CaptureClient(output.Target)) {
                 var chrome=visual.Detect(image);
-                var frame=await LocalOcr.ReadCatch(image,chrome,catchConfig,species,move,slot,++catchFrameId,at);
+                var frame=await LocalOcr.ReadCatch(image,chrome,catchConfig,species,move,slot,++catchFrameId,at,catchFlow.Phase==CatchPhase.SelectCatcher || !String.IsNullOrWhiteSpace(catchConfig.ExpectedLead));
                 frame.WorldStable=catchWorld.Observe(chrome.Kind,at)==VisualDecision.Move;
                 return frame;
             }
@@ -80,28 +84,41 @@ namespace MovementPrototype {
                 if(closing || run!=generation)return;
                 if(previewOnly) {
                     if(!output.Foreground())return;
+                    Activity("CATCH PREVIEW READ: "+frame.ReadDetail.Replace('\n',' '));
                     lastScreenText=CatchVision.Describe(frame);
                     encounterStatus.Text="Read-only catching check: "+frame.View+"; opponent="+(frame.Opponent ?? "unknown")+". No input sent.";
                     log.Items.Insert(0,encounterStatus.Text);return;
                 }
                 if(!CatchContext(run,epoch))return;
-                if(clock.Elapsed.TotalSeconds-frame.CapturedAt>CatchFlow.MaximumFrameAge) {StopCatch("Stopped — catching recognition took too long; check manually");return;}
+                if(clock.Elapsed.TotalSeconds-frame.CapturedAt>CatchFlow.MaximumFrameAge) {
+                    Activity("CATCH: discarded slow read; ms="+Math.Round((clock.Elapsed.TotalSeconds-frame.CapturedAt)*1000)+"; retry="+(slowCatchReads+1));
+                    if(++slowCatchReads>=3)StopCatch("Stopped — three catch reads were too slow; no stale input sent");
+                    return;
+                }
+                slowCatchReads=0;
                 catchBusy=frame.View==CatchView.Busy;
+                string view=frame.View+"; own="+frame.ActivePokemon+"; ready="+frame.Ready+"; ownArea="+frame.OwnSeal;if(view!=lastCatchView) {Activity("CATCH SCREEN: "+view);if(frame.View==CatchView.Moves)Activity("CATCH MOVE READ: "+frame.ReadDetail.Replace('\n',' '));lastCatchView=view;}
                 lastScreenText=CatchVision.Describe(frame);
+                if(catchFlow.Phase==CatchPhase.WaitBall && frame.Message!=lastCatchMessage) {lastCatchMessage=frame.Message;Activity("CATCH RESULT READ: "+frame.Message.Replace('\n',' '));}
                 var action=catchFlow.Observe(frame,clock.Elapsed.TotalSeconds,true);
                 encounterStatus.Text=catchFlow.Status;
                 if(catchFlow.Phase==CatchPhase.Stopped) {StopCatch(catchFlow.Status);return;}
                 if(catchFlow.Phase==CatchPhase.Complete) {FinishCatch();return;}
                 if(action==null)return;
                 catchInputPending=true;
-                // Re-read the target and chosen control from a new screen immediately before input.
-                var fresh=await CatchSnapshot(species,move,slot);
+                // Ready commands use a fresh screenshot and exact caption/control
+                // pixels instead of repeating the same expensive OCR on identical text.
+                bool pixelCheck=action.Kind==CatchActionKind.ChooseMove || action.Kind==CatchActionKind.UseBall || action.Kind==CatchActionKind.OpenFight || action.Kind==CatchActionKind.OpenBag;
+                var fresh=pixelCheck ? frame : await CatchSnapshot(species,move,slot);
                 if(!CatchContext(run,epoch))return;
-                if(!CatchVision.Reconfirms(action,frame,fresh)) {StopCatch("Stopped — catching menu changed or could not be reconfirmed; check target manually");return;}
+                if(!pixelCheck && !CatchVision.Reconfirms(action,frame,fresh)) {StopCatch("Stopped — catching menu changed or could not be reconfirmed; check target manually");return;}
                 action.FrameId=fresh.Id;action.Point=fresh.Control(action.Kind).Point;
                 if(!catchFlow.Allows(action,fresh,clock.Elapsed.TotalSeconds,true)) {StopCatch("Stopped — catching screen was stale; no further input");return;}
+                using(var current=Native.CaptureClient(output.Target)) {
+                    string seal;if(!fresh.InputSeals.TryGetValue(action.Kind,out seal) || seal!=CatchVision.InputSeal(current,fresh,action.Kind)) {StopCatch("Stopped — target, catcher or control pixels changed before input");return;}
+                }
                 Native.ClickClient(output.Target,output.Process,action.Point);
-                Activity("CATCH ACTION: "+action.Kind+"; "+action.Label+"; balls requested="+catchFlow.BallsUsed);
+                Activity("CATCH ACTION: "+action.Kind+"; "+action.Label+"; balls requested="+catchFlow.BallsUsed+"; screen-to-input="+Math.Round((clock.Elapsed.TotalSeconds-fresh.CapturedAt)*1000)+"ms");
             }catch(Exception ex) {
                 if(!closing && run==generation) {StopCatch("Stopped — catching check failed: "+ex.Message);}
             }finally {catchInputPending=false;nextCatchScan=clock.Elapsed.TotalSeconds+(catchBusy ? .25 : .10);scanning=false;if(!closing)RefreshState();}

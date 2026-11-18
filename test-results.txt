@@ -48,8 +48,11 @@ PASS: unexpected focus and manual input revoke stale work; busy input and denied
 PASS: a completed hunt leaves the other active; global emergency stop cancels both; duplicate windows are rejected
 PASS: busy battle dialogue yields its turn to the other hunt immediately after current recognition completes
 PASS: catch screen revalidation receives a longer bounded turn allowance and cannot hold foreground indefinitely
+PASS: compact pixel-font PP accepts only a unique current/total pair; ambiguous, exhausted and impossible counters remain blocked
+PASS: catcher OCR tolerates one unique missing letter while pixel seals cover caption/control evidence and exclude unrelated scenery
 PASS: catching configuration validates draft/start separately, rejects damaging recipes and unbounded stock use, and requires two exact target readings
 PASS: configured False Swipe, one ball, exact capture acknowledgement and stable world complete the sequence; world alone cannot resume
+PASS: capture preview requires the exact species and an owned throw; its close and stable world complete the flow; wrong/absent results and a changed lead remain blocked
 PASS: escape from balls retries only within the configured cap; zero PP and empty stock stop before input
 PASS: wrong species, stale frames, revoked foreground lease, handoff epochs, emergency cancellation and unconfirmed battle exit authorize no catching input
 PASS: ordered preparation and repeated False Swipe turns are acknowledged individually; catcher selection requires matching name and party slot

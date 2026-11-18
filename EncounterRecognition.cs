@@ -44,6 +44,10 @@ namespace MovementPrototype {
                 var result=await Recognize(mask);string text=TextOf(result);
                 if(EncounterRecognition.Parse("[Encounter header]\n"+text+"\n[Battle controls]\n\n[Full screen]\n").Name!=null) {candidate.Header=text;candidate.IdentityBounds=CaptionBounds(result,heading,image.Size);}
             }
+            if(EncounterRecognition.Parse("[Encounter header]\n"+candidate.Header+"\n[Battle controls]\n\n[Full screen]\n").Name==null) {
+                var sharp=await ReadCatchRegion(image,heading,false,true);
+                if(EncounterRecognition.Parse("[Encounter header]\n"+sharp.Text+"\n[Battle controls]\n\n[Full screen]\n").Name!=null)candidate.Header=sharp.Text;
+            }
             return candidate;
         }
         public static Bitmap RepelOcrImage(Bitmap image,Rectangle area,bool keepGold=false) {
@@ -145,11 +149,11 @@ namespace MovementPrototype {
             foreach(var line in result.Lines) lines.Add(line.Text);
             return String.Join("\n",lines);
         }
-        public static async Task<CatchTextRegion> ReadCatchRegion(Bitmap image,Rectangle area) {
+        public static async Task<CatchTextRegion> ReadCatchRegion(Bitmap image,Rectangle area,bool contrast=false,bool pixelScale=false) {
             area.Intersect(new Rectangle(Point.Empty,image.Size));if(area.Width<1 || area.Height<1)throw new InvalidOperationException("Catching region is outside the client.");
-            double factor=Math.Min(3,(double)OcrEngine.MaxImageDimension/Math.Max(area.Width,area.Height));
-            using(var crop=new Bitmap(Math.Max(1,(int)(area.Width*factor)),Math.Max(1,(int)(area.Height*factor)))) {
-                using(var graphics=Graphics.FromImage(crop)) {graphics.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;graphics.DrawImage(image,new Rectangle(Point.Empty,crop.Size),area,GraphicsUnit.Pixel);}
+            double factor=Math.Min(pixelScale ? 6 : 3,(double)OcrEngine.MaxImageDimension/Math.Max(area.Width,area.Height));
+            using(var crop=contrast ? RepelOcrImage(image,area) : new Bitmap(Math.Max(1,(int)(area.Width*factor)),Math.Max(1,(int)(area.Height*factor)))) {
+                if(!contrast)using(var graphics=Graphics.FromImage(crop)) {graphics.InterpolationMode=pixelScale ? System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor : System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;graphics.PixelOffsetMode=System.Drawing.Drawing2D.PixelOffsetMode.Half;graphics.DrawImage(image,new Rectangle(Point.Empty,crop.Size),area,GraphicsUnit.Pixel);}
                 float sx=(float)area.Width/crop.Width,sy=(float)area.Height/crop.Height;
                 var result=await Recognize(crop);var region=new CatchTextRegion {Text=TextOf(result)};
                 foreach(var line in result.Lines) {
@@ -160,17 +164,56 @@ namespace MovementPrototype {
                 return region;
             }
         }
-        public static async Task<CatchFrame> ReadCatch(Bitmap image,ChromeReading chrome,CatchConfig config,string species,string move,int slot,long id,double at) {
+        public static async Task<CatchFrame> ReadCatch(Bitmap image,ChromeReading chrome,CatchConfig config,string species,string move,int slot,long id,double at,bool partyNeeded=true) {
+            if(chrome.Kind==ChromeKind.Clear && !chrome.BattleBox.HasValue) {
+                var area=new Rectangle((int)(image.Width*.60),(int)(image.Height*.32),(int)(image.Width*.35),(int)(image.Height*.19));
+                var preview=await ReadCatchRegion(image,area);var world=CatchVision.Preview(preview,species,id,at);world.ReadDetail=preview.Text;
+                if(!String.IsNullOrWhiteSpace(config.ExpectedLead)) {
+                    var lead=await ReadCatchRegion(image,new Rectangle(0,0,(int)(image.Width*.15),(int)(image.Height*.14)));
+                    world.LeadPokemon=CatchVision.LeadName(lead,config,image.Size);
+                }
+                foreach(var kind in world.Controls.Keys)world.InputSeals[kind]=CatchVision.InputSeal(image,world,kind);
+                return world;
+            }
             var headerArea=chrome.Kind==ChromeKind.Battle || chrome.BattleBox.HasValue ? chrome.Header : new Rectangle(0,0,image.Width,(int)(image.Height*.30));
             var menuArea=BattleRegions.Menu(chrome,image.Size);
             var bagArea=new Rectangle((int)(image.Width*.20),(int)(image.Height*.18),(int)(image.Width*.58),(int)(image.Height*.48));
             var ownArea=BattleRegions.Own(chrome,image.Size);
             var logArea=BattleRegions.Log(chrome,image.Size);
             var leadArea=new Rectangle(0,0,(int)(image.Width*.15),(int)(image.Height*.53));
-            var regions=await Task.WhenAll(ReadCatchRegion(image,headerArea),ReadCatchRegion(image,menuArea),ReadCatchRegion(image,ownArea),ReadCatchRegion(image,logArea),ReadCatchRegion(image,leadArea),ReadCatchRegion(image,bagArea));
-            var stockArea=CatchVision.StockArea(regions[5],config.Ball,image.Size);
-            if(stockArea.HasValue) {var count=await ReadCatchRegion(image,stockArea.Value);regions[5].Rows.AddRange(count.Rows);regions[5].Text+="\n"+count.Text;}
-            return CatchVision.Parse(regions[0],regions[1],regions[2],regions[3],regions[4],chrome,image,config,species,move,slot,id,at,regions[5]);
+            var empty=Task.FromResult(new CatchTextRegion());
+            var regions=await Task.WhenAll(ReadCatchRegion(image,headerArea),ReadCatchRegion(image,menuArea,!String.IsNullOrEmpty(move)),ReadCatchRegion(image,ownArea),ReadCatchRegion(image,logArea),partyNeeded ? ReadCatchRegion(image,leadArea) : empty,chrome.BattleBox.HasValue ? empty : ReadCatchRegion(image,bagArea),ReadCatchRegion(image,BattleRegions.BottomLog(chrome,image.Size)));
+            regions[3].Text+="\n"+regions[6].Text;
+            if(EncounterRecognition.Parse("[Encounter header]\n"+regions[0].Text+"\n[Battle controls]\n\n[Full screen]\n").Name==null) {
+                var sharp=await ReadCatchRegion(image,headerArea,false,true);
+                if(EncounterRecognition.Parse("[Encounter header]\n"+sharp.Text+"\n[Battle controls]\n\n[Full screen]\n").Name!=null)regions[0]=sharp;
+            }
+            if(Regex.IsMatch(regions[1].Text,@"Choose\s*Attack",RegexOptions.IgnoreCase)) {
+                foreach(var row in regions[1].Rows)row.Text=Regex.Replace(row.Text,@"(\d{1,2})\s*[/\\'’.,:]\s*(\d{1,2})","$1/$2");
+            }
+            bool compactItems=Regex.IsMatch(regions[1].Text,@"Choose\s*Item",RegexOptions.IgnoreCase);
+            var stockRegion=compactItems ? regions[1] : regions[5];
+            var stockArea=CatchVision.StockArea(stockRegion,config.Ball,image.Size,compactItems);
+            if(stockArea.HasValue) {
+                var count=await ReadCatchRegion(image,stockArea.Value,false,compactItems);
+                stockRegion.Rows.AddRange(count.Rows);
+                stockRegion.Text+="\n"+count.Text;
+                if(compactItems && CatchVision.StockArea(stockRegion,config.Ball,image.Size,true).HasValue) {
+                    var contrastCount=await ReadCatchRegion(image,stockArea.Value,true);
+                    stockRegion.Rows.AddRange(contrastCount.Rows);
+                    stockRegion.Text+="\n"+contrastCount.Text;
+                }
+            }
+            if(!String.IsNullOrWhiteSpace(config.Catcher) && CatchVision.OwnCaption(regions[2],config.Catcher,image.Size).IsEmpty) {
+                var ownContrast=await ReadCatchRegion(image,ownArea,true);regions[2].Text+="\n"+ownContrast.Text;regions[2].Rows.AddRange(ownContrast.Rows);
+            }
+            var frame=CatchVision.Parse(regions[0],regions[1],regions[2],regions[3],regions[4],chrome,image,config,species,move,slot,id,at,regions[5]);
+            CatchVision.AddNavigation(frame,regions[1],image);
+            frame.HeaderSeal=CatchVision.WildCaption(regions[0],image.Size,headerArea);frame.OwnSeal=CatchVision.OwnCaption(regions[2],config.Catcher,image.Size);
+            if(frame.OwnSeal.IsEmpty)frame.OwnSeal=ownArea;
+            frame.ReadDetail=String.Join(" | ",regions[1].Rows.ConvertAll(r=>r.Text));
+            foreach(var kind in frame.Controls.Keys)frame.InputSeals[kind]=CatchVision.InputSeal(image,frame,kind);
+            return frame;
         }
         static async Task<OcrResult> Recognize(Bitmap image) {
             var engine=AcquireEngine();

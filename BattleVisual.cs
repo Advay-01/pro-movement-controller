@@ -67,13 +67,11 @@ namespace MovementPrototype {
                     while(top>0 && HeaderGray(edge,top-1))top--;
                     while(bottom<height-1 && HeaderGray(edge,bottom+1))bottom++;
                     if(bottom-top<height*.015 || bottom-top>height*.09)continue;
-                    int dark=0,total=0;
-                    for(int yy=bottom+Math.Max(5,panelWidth/60);yy<Math.Min(height,bottom+(int)(panelWidth*.30));yy+=Math.Max(3,height/60))
-                        for(int xx=left+(int)(panelWidth*.77);xx<left+(int)(panelWidth*.97);xx+=Math.Max(3,width/90)) {total++;if(PanelBlack(xx,yy))dark++;}
-                    // A matching header without its black log panel is uncertain, never a clear world.
-                    bool log=total>0 && (double)dark/total>=.72;
-                    var box=new Rectangle(left,top,panelWidth,Math.Min(height-top,bottom-top+(int)(panelWidth*.53)));
-                    return new ChromeReading {Kind=log ? ChromeKind.Battle : ChromeKind.Transition,GoldX=center,BattleBox=box,Header=new Rectangle(left,Math.Max(0,top-2),panelWidth,Math.Min(height-top,bottom-top+5))};
+                    // Opening a submenu replaces the black log. Keep reading the
+                    // battle caption; exact wild identity still authorizes actions.
+                    int captionHeight=Math.Max(bottom-top+5,Math.Max(32,(int)(height*.055)));
+                    var box=new Rectangle(left,top,panelWidth,Math.Min(height-top,captionHeight+(int)(panelWidth*.53)));
+                    return new ChromeReading {Kind=ChromeKind.Battle,GoldX=center,BattleBox=box,Header=new Rectangle(left,Math.Max(0,top-2),panelWidth,Math.Min(height-top,Math.Max(captionHeight,(int)(height*.09))))};
                 }
             }
             return null;
@@ -144,6 +142,9 @@ namespace MovementPrototype {
             int black=0,samples=0;
             for(int y=height/8;y<height;y+=Math.Max(1,height/12)) for(int x=width/12;x<width;x+=Math.Max(1,width/16)) {samples++;if(Black(x,y,9))black++;}
             if(samples>0 && (double)black/samples>.94) return new ChromeReading {Kind=ChromeKind.Transition};
+            // A bounded gray title bar is stronger evidence than the legacy
+            // full-width dark row, which can match HUD icons over a night map.
+            var floating=FloatingPanel();if(floating!=null)return floating;
             for(int y=Math.Max(2,height/60);y<(int)(height*.30);y+=Math.Max(2,height/180)) {
                 int gray=0,total=0;
                 for(int x=(int)(width*.06);x<(int)(width*.97);x+=Math.Max(2,width/70)) {total++;if(GrayDark(x,y))gray++;}
@@ -158,7 +159,6 @@ namespace MovementPrototype {
                 int top=Math.Max(0,y-band), bottom=Math.Min(height,y+Math.Max(28,(int)(height*.075)));
                 return new ChromeReading {Kind=ChromeKind.Battle,GoldX=sumX/gold,Header=new Rectangle((int)(width*.10),top,(int)(width*.86),Math.Max(1,bottom-top))};
             }
-            var floating=FloatingPanel();if(floating!=null)return floating;
             if(PanelFraction((int)(height*.06))>.92) return new ChromeReading {Kind=ChromeKind.Transition};
             return WorldHud();
         }
@@ -167,15 +167,20 @@ namespace MovementPrototype {
         static Rectangle Clip(Rectangle area,Size image) {area.Intersect(new Rectangle(Point.Empty,image));return area;}
         public static Rectangle Menu(ChromeReading chrome,Size image) {
             if(!chrome.BattleBox.HasValue)return new Rectangle((int)(image.Width*.72),(int)(image.Height*.13),(int)(image.Width*.28),(int)(image.Height*.80));
-            var b=chrome.BattleBox.Value;return Clip(Rectangle.FromLTRB(b.Left+(int)(b.Width*.73),chrome.Header.Bottom,b.Right,b.Bottom+(int)(b.Width*.05)),image);
+            var b=chrome.BattleBox.Value;return Clip(Rectangle.FromLTRB(b.Left+(int)(b.Width*.67),b.Top+(int)(b.Width*.04),b.Right,b.Bottom+(int)(b.Width*.05)),image);
         }
         public static Rectangle Own(ChromeReading chrome,Size image) {
             if(!chrome.BattleBox.HasValue)return new Rectangle((int)(image.Width*.40),(int)(image.Height*.45),(int)(image.Width*.33),(int)(image.Height*.34));
-            var b=chrome.BattleBox.Value;return Clip(new Rectangle(b.Left+(int)(b.Width*.49),b.Top+(int)(b.Width*.36),(int)(b.Width*.24),(int)(b.Width*.16)),image);
+            var b=chrome.BattleBox.Value;return Clip(new Rectangle(b.Left+(int)(b.Width*.42),b.Top+(int)(b.Width*.33),(int)(b.Width*.31),(int)(b.Width*.20)),image);
         }
         public static Rectangle Log(ChromeReading chrome,Size image) {
             if(!chrome.BattleBox.HasValue)return new Rectangle(0,(int)(image.Height*.70),(int)(image.Width*.63),(int)(image.Height*.29));
             var b=chrome.BattleBox.Value;return Clip(new Rectangle(b.Left+(int)(b.Width*.74)+3,chrome.Header.Bottom+2,(int)(b.Width*.24)-3,(int)(b.Width*.30)),image);
+        }
+        public static Rectangle BottomLog(ChromeReading chrome,Size image) {
+            if(!chrome.BattleBox.HasValue)return Log(chrome,image);
+            var b=chrome.BattleBox.Value;
+            return Clip(Rectangle.FromLTRB(b.Left-(int)(b.Width*.10),b.Top+(int)(b.Width*.46),b.Left+(int)(b.Width*.73),b.Bottom+(int)(b.Width*.06)),image);
         }
     }
     public enum VisualDecision { ValidateWorld, Move, Pause, ReadBattle }
@@ -245,7 +250,12 @@ namespace MovementPrototype {
                 var floating=detector.Detect(image);
                 if(floating.Kind!=ChromeKind.Battle || !floating.BattleBox.HasValue || floating.BattleBox.Value.Right>535)throw new Exception("Inset battle panel must override visible party/world HUD: "+floating.Kind+"; "+floating.BattleBox);
                 g.FillRectangle(Brushes.White,415,82,110,145);
-                if(detector.Detect(image).Kind!=ChromeKind.Transition)throw new Exception("Inset battle header with an uncertain menu must never authorize walking");
+                if(detector.Detect(image).Kind==ChromeKind.Clear)throw new Exception("Inset battle header with an uncertain menu must never authorize walking");
+                g.Clear(Color.FromArgb(15,15,16));DrawHud(g);g.DrawString("VS.",font,Brushes.Gold,205,5);
+                using(var fill=new SolidBrush(Color.FromArgb(55,55,59)))g.FillRectangle(fill,85,60,440,22);
+                g.FillRectangle(Brushes.Black,415,82,110,145);g.DrawString("VS.",font,Brushes.Gold,235,61);g.Flush();
+                floating=detector.Detect(image);
+                if(!floating.BattleBox.HasValue || floating.Header.Top<50)throw new Exception("Night-map HUD gold must not override the real inset battle title");
             }
             foreach(var size in new Size[] {new Size(1150,864),new Size(1150,600),new Size(1600,900)})using(var image=new Bitmap(size.Width,size.Height))using(var g=Graphics.FromImage(image))using(var fill=new SolidBrush(Color.FromArgb(45,45,49))) {
                 g.Clear(Color.FromArgb(32,78,45));

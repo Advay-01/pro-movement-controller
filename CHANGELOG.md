@@ -1,5 +1,13 @@
 # Changes
 
+## v2.1.5
+
+Fixes live auto-catching: open submenus retain battle detection, scoped catcher OCR tolerates a unique missing letter, tiny PP counters require an unambiguous current/total pair, and the compact Choose Item list supports aligned ball stock. Navigation also works when a submenu was already open. Initial slow reads retry within a bound; fresh target/catcher/control pixel checks exclude unrelated scenery and header artwork.
+
+Captures are confirmed from the battle message or the exact-species capture preview after a throw. The controller closes the preview and checks the world before resuming. A fresh pixel check avoids a second OCR pass before move and ball inputs. Unreadable ball counters get a scoped OCR retry before the controller stops.
+
+Live tests caught Ralts, Seedot and Zigzagoon. The Zigzagoon test verified capture confirmation, preview closure and automatic movement resume. False Swipe and the Poké Ball click took 0.79 and 0.86 seconds from screen capture to input. The last stock retry was verified locally. All 72 local check groups and the Windows OCR fixtures pass.
+
 ## v2.1.4
 
 Adds a white/gold contrast OCR retry when the battle title has no exact recognized species. Unknown text still cannot authorize Run; target checks and fresh confirmation remain required. An Arbok Windows OCR fixture and target-protection check pass. Live Arbok recognition remains to be verified.
