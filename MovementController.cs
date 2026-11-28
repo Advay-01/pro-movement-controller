@@ -11,14 +11,21 @@ namespace MovementPrototype {
     public sealed class Settings {
         public Keys First = Keys.Left, Second = Keys.Right;
         public double Hold = 0.8, Gap = 0.15, Limit = 30;
+        public double? MaxHold, MaxGap;
         public bool UntilStopped;
         public bool AutoFocus;
         public void Validate() {
             if (!Allowed(First) || !Allowed(Second) || First == Second)
                 throw new ArgumentException("Choose two different movement keys.");
-            if (!Finite(Hold) || Hold < 0.05 || Hold > 5 || !Finite(Gap) || Gap < 0.05 || Gap > 5 ||
-                !Finite(Limit) || Limit < 1 || Limit > 120)
-                throw new ArgumentException("Hold: 0.05–5s; gap: 0.05–5s; run: 1–120s.");
+            if (!ValidInterval(Hold,MaxHold ?? Hold))
+                throw new ArgumentException("Set Hold Min and Max between 0.05 and 5 seconds, with Min no greater than Max.");
+            if (!ValidInterval(Gap,MaxGap ?? Gap))
+                throw new ArgumentException("Set Gap Min and Max between 0.05 and 5 seconds, with Min no greater than Max.");
+            if (!Finite(Limit) || Limit < 1 || Limit > 120)
+                throw new ArgumentException("Set the run limit between 1 and 120 seconds.");
+        }
+        static bool ValidInterval(double min,double max) {
+            return Finite(min) && Finite(max) && min>=0.05 && min<=max && max<=5;
         }
         static bool Finite(double n) { return !Double.IsNaN(n) && !Double.IsInfinity(n); }
         public static bool Allowed(Keys k) { return k == Keys.Left || k == Keys.Right || k == Keys.Up || k == Keys.Down || k == Keys.W || k == Keys.A || k == Keys.S || k == Keys.D; }
@@ -33,6 +40,7 @@ namespace MovementPrototype {
     // No background loops: one state transition per tick. Time is monotonic.
     public sealed class Controller {
         readonly IOutput output;
+        readonly Random random;
         Settings config;
         Keys? held;
         double began, next;
@@ -45,13 +53,20 @@ namespace MovementPrototype {
         public bool Latched { get; private set; }
         public string Status { get; private set; }
         public Keys? Held { get { return held; } }
-        public Controller(IOutput sink) { output = sink; Status = "Ready — practice mode"; }
+        public Controller(IOutput sink,Random timingRandom=null) {
+            output=sink;
+            random=timingRandom ?? new Random(Guid.NewGuid().GetHashCode());
+            Status="Ready — practice mode";
+        }
+        double SampleInterval(double min,double? max) {
+            return max.HasValue && max.Value>min ? min+(max.Value-min)*random.NextDouble() : min;
+        }
         public void Start(Settings s, double now, bool initiallyPaused=false) {
             if (Latched) throw new InvalidOperationException("Reset the emergency stop first.");
             if (Running) return;
             s.Validate();
             if (!output.Ready()) throw new InvalidOperationException("The selected target is unavailable. Keep it restored; foreground mode also requires focus and released modifier keys.");
-            config = new Settings { First=s.First, Second=s.Second, Hold=s.Hold, Gap=s.Gap, Limit=s.Limit, UntilStopped=s.UntilStopped, AutoFocus=s.AutoFocus };
+            config = new Settings { First=s.First, Second=s.Second, Hold=s.Hold, Gap=s.Gap, MaxHold=s.MaxHold, MaxGap=s.MaxGap, Limit=s.Limit, UntilStopped=s.UntilStopped, AutoFocus=s.AutoFocus };
             recovery.Cancel();
             began = now; next = now; second = false;turnStartSide=null; Paused=initiallyPaused; Running = true;
             Status = initiallyPaused ? "Starting — visual scene check" : "Running";
@@ -73,7 +88,7 @@ namespace MovementPrototype {
                     if (result == FocusRecoveryResult.Failed) { Stop(recovery.Status); return; }
                     if (result == FocusRecoveryResult.Recovered) {
                         recovery.Cancel();
-                        next = now + config.Gap;
+                        next = now + SampleInterval(config.Gap,config.MaxGap);
                         Status = "Focus restored — released gap before resuming";
                     }
                     return;
@@ -82,13 +97,13 @@ namespace MovementPrototype {
                 if (Paused) return;
                 if (now < next) return;
                 if (held.HasValue) {
-                    Release(); second = !second; next = now + config.Gap;
+                    Release(); second = !second; next = now + SampleInterval(config.Gap,config.MaxGap);
                     Status = "Running — gap";
                 } else {
                     if(!turnStartSide.HasValue)turnStartSide=second;
                     Keys k = second ? config.Second : config.First;
                     // Remember before sending, so an uncertain send is followed by key-up.
-                    held = k; output.Down(k); next = now + config.Hold;
+                    held = k; output.Down(k); next = now + SampleInterval(config.Hold,config.MaxHold);
                     Status = "Running — holding " + k;
                 }
             } catch {
@@ -114,6 +129,7 @@ namespace MovementPrototype {
         public void Emergency() { Latched = true; Stop("EMERGENCY STOP — reset required"); }
         public void Reset() { Release(); Latched = false; Status = "Ready — stopped"; }
     }
+#if !LINUX
     static class Native {
         [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
@@ -182,7 +198,7 @@ namespace MovementPrototype {
             if (SendInput(1, new INPUT[] { input }, Marshal.SizeOf(typeof(INPUT))) != 1)
                 throw new InvalidOperationException("Windows rejected the key event. Stop and check the target. Do not elevate to bypass restrictions.");
         }
-        public static void ClickClient(IntPtr window,uint expectedProcess,Point point) {
+        public static double ClickClient(IntPtr window,uint expectedProcess,Point point,Stopwatch clock=null) {
             RECT bounds; uint actual; GetWindowThreadProcessId(window,out actual);
             if(actual!=expectedProcess || GetForegroundWindow()!=window || IsIconic(window) || !GetClientRect(window,out bounds) || point.X<0 || point.Y<0 || point.X>=bounds.Right || point.Y>=bounds.Bottom)
                 throw new InvalidOperationException("Run button target changed; no click sent.");
@@ -193,13 +209,16 @@ namespace MovementPrototype {
             var up=new INPUT {type=0,data=new UNION {mouse=new MOUSE {flags=4}}};
             try {
                 if(SendInput(1,new INPUT[] {down},Marshal.SizeOf(typeof(INPUT)))!=1) throw new InvalidOperationException("Windows rejected Run mouse-down.");
+                double dispatchedAt=clock==null ? 0 : clock.Elapsed.TotalSeconds;
                 System.Threading.Thread.Sleep(60);
+                return dispatchedAt;
             } finally {
                 if(SendInput(1,new INPUT[] {up},Marshal.SizeOf(typeof(INPUT)))!=1) throw new InvalidOperationException("Mouse release failed. Input stopped; release the mouse button manually.");
             }
         }
         public static string Title(IntPtr h) { var s = new System.Text.StringBuilder(512); GetWindowText(h,s,s.Capacity); return s.ToString(); }
     }
+#endif
     sealed class Output : IFocusOutput {
         readonly Func<int,bool> keyDown;
         public RunAwayKey RunKey;
@@ -262,7 +281,9 @@ namespace MovementPrototype {
         readonly Stopwatch clock = Stopwatch.StartNew();
         readonly Timer timer = new Timer { Interval = 15 };
         readonly ComboBox first = new ComboBox(), second = new ComboBox();
-        readonly NumericUpDown hold = Number(0.8m,0.05m,5), gap = Number(0.15m,0.05m,5), limit = Number(30,1,120);
+        readonly NumericUpDown minHold=Number(0.8m,0.05m,5), maxHold=Number(0.8m,0.05m,5);
+        readonly NumericUpDown minGap=Number(0.15m,0.05m,5), maxGap=Number(0.15m,0.05m,5);
+        readonly NumericUpDown limit=Number(30,1,120);
         readonly CheckBox untilStop = new CheckBox { Text="Until I stop it (no time limit)", Checked=true, AutoSize=true };
         readonly CheckBox continueRepel = new CheckBox { Text="Continue Repel — use another when the expired prompt appears", AutoSize=true };
         readonly RepelPromptVisual repelVisual=new RepelPromptVisual();
@@ -275,10 +296,10 @@ namespace MovementPrototype {
         readonly Label encounterStatus = new Label { Text="Encounter handling off — PRO must stay visible and focused.", AutoSize=true, MaximumSize=new Size(570,0) };
         readonly NotifyIcon tray = new NotifyIcon { Icon=SystemIcons.Application,Text="Movement Controller" };
         HashSet<string> desiredNames;
-        bool scanning;
+        bool scanning,rareCatchPending;
         readonly RunAwayKey runKey = new RunAwayKey(Native.Send);
         bool escapeHeld { get { return runKey.Held; } }
-        double nextScan, waitSince;
+        double nextScan, waitSince, lastRareBattleSeen;
         string lastScreenText="";
         string lastError;
         readonly EncounterReadGrace readGrace=new EncounterReadGrace();
@@ -287,30 +308,116 @@ namespace MovementPrototype {
         readonly ReadyEscapePolicy readyEscape=new ReadyEscapePolicy();
         Point? trackedRun,trackedItems;
         int trackedWidth,trackedHeight,trackedGoldX,trackedHeaderY;
+        Rectangle? trackedBattleBox;
         ControlReady loggedReady=ControlReady.Unknown;
-        string verifiedHeaderSignature,verifiedHeaderName;
-        Rectangle? verifiedHeadingArea;
-        void ResetControls() {trackedRun=trackedItems=null;readyEscape.Reset();loggedReady=ControlReady.Unknown;verifiedHeaderSignature=verifiedHeaderName=null;verifiedHeadingArea=null;managedWaiting=false;}
+        double controlUnknownSince=-1;
+        RunButtonCandidate confirmedOpponent;
+        string confirmedOpponentPixels,screenedOpponentPixels,lastRareAnnouncement;
+        HashSet<ulong> screenedFeed;
+        bool chatNeedsCheck;
+        string screenedAnnouncementText="";
+        void ResetControls() {trackedRun=trackedItems=null;controlUnknownSince=-1;readyEscape.Reset();loggedReady=ControlReady.Unknown;confirmedOpponent=null;confirmedOpponentPixels=screenedOpponentPixels=null;screenedFeed=null;chatNeedsCheck=false;screenedAnnouncementText="";managedWaiting=false;}
         bool SameControls(Bitmap image,ChromeReading chrome) {
-            return trackedRun.HasValue && trackedItems.HasValue && image.Width==trackedWidth && image.Height==trackedHeight && Math.Abs(chrome.GoldX-trackedGoldX)<=8 && Math.Abs(chrome.Header.Top-trackedHeaderY)<=8;
+            if(!trackedRun.HasValue || !trackedItems.HasValue || image.Width!=trackedWidth || image.Height!=trackedHeight)return false;
+            if(trackedBattleBox.HasValue && chrome.BattleBox.HasValue) {
+                var old=trackedBattleBox.Value;var current=chrome.BattleBox.Value;
+                return Math.Abs(current.Left-old.Left)<=8 && Math.Abs(current.Right-old.Right)<=8 &&
+                    Math.Abs(current.Top-old.Top)<=8 && Math.Abs(current.Bottom-old.Bottom)<=8;
+            }
+            return trackedBattleBox==chrome.BattleBox && Math.Abs(chrome.GoldX-trackedGoldX)<=8 && Math.Abs(chrome.Header.Top-trackedHeaderY)<=8;
+        }
+        bool CanUseCheckedEscape(Bitmap image,ChromeReading chrome,double now) {
+            if(scanning || rareCatchPending || catchFlow.Active || stableCount<2 ||
+                !clickFallback.Checked || escapeHeld || !readyEscape.Due(now) ||
+                confirmedOpponent==null || !confirmedOpponent.IdentityBounds.HasValue ||
+                screenedOpponentPixels==null || screenedOpponentPixels!=confirmedOpponentPixels ||
+                screenedFeed==null ||
+                !SameControls(image,chrome) || EncounterRecognition.CloseToTarget(stableName,desiredNames))return false;
+            var area=confirmedOpponent.IdentityBounds.Value;
+            return chrome.Header.Contains(area) && VerifiedHeader.Signature(image,area)==confirmedOpponentPixels &&
+                LocalOcr.EncounterFeedHighlights(image).IsSubsetOf(screenedFeed);
         }
         void WatchControls(Bitmap image,ChromeReading chrome) {
             if(catchFlow.Active || !trackedRun.HasValue)return;
             if(!SameControls(image,chrome)) {ResetControls();stableCount=0;stableName="";nextScan=0;return;}
             var state=BattleControlReady.Read(image,trackedRun.Value,trackedItems.Value);
-            readyEscape.Observe(state,clock.Elapsed.TotalSeconds);
-            if(state!=loggedReady) {Activity("CONTROLS: "+state);loggedReady=state;}
-            if(controller.Running && !scanning && stableCount>=2 && verifiedHeaderName==stableName && verifiedHeaderSignature!=null && clickFallback.Checked && readyEscape.Due(clock.Elapsed.TotalSeconds) && !escapeHeld && output.Ready() && !output.Busy()) {
-                if(verifiedHeadingArea.HasValue && VerifiedHeader.Signature(image,verifiedHeadingArea.Value)==verifiedHeaderSignature) {
-                    if(!EncounterRecognition.CloseToTarget(stableName,desiredNames))ClickReadyButton(stableName,trackedRun.Value,true);
+            double now=clock.Elapsed.TotalSeconds;
+            readyEscape.Observe(state,now);
+            if(state==ControlReady.Unknown) {
+                if(controlUnknownSince<0)controlUnknownSince=now;
+                else if(!scanning && now-controlUnknownSince>=1) {
+                    trackedRun=trackedItems=null;
+                    controlUnknownSince=-1;
+                    nextScan=0;
+                    Activity("CONTROLS: locating changed battle menu again");
+                    return;
                 }
+            } else controlUnknownSince=-1;
+            if(state!=loggedReady) {Activity("CONTROLS: "+state);loggedReady=state;}
+            if(!scanning && state==ControlReady.Busy && readyEscape.Requests==0 && screenedFeed!=null && !chatNeedsCheck &&
+                !LocalOcr.EncounterFeedHighlights(image).IsSubsetOf(screenedFeed)) {
+                chatNeedsCheck=true;
+                Activity("RUN: screening new chat highlights during dialogue");
             }
+            if(controller.Running && scene.InBattle && output.Ready() && !output.Busy() && CanUseCheckedEscape(image,chrome,now))
+                ClickReadyButton(stableName,trackedRun.Value,true);
         }
-        void ClickReadyButton(string name,Point point,bool reusedHeader) {
-            if(catchFlow.Active || EncounterRecognition.CloseToTarget(name,desiredNames))throw new InvalidOperationException("Run blocked for protected/catching encounter.");
-            Native.ClickClient(output.Target,output.Process,point);
+        internal static string CheckedEscapeTest() {
+            using(var app=new App())using(var frame=new Bitmap(640,480)) {
+                app.timer.Stop();
+                app.desiredNames=EncounterRecognition.Targets("Mimikyu");
+                app.stableName="slowking";app.stableCount=2;
+                app.trackedRun=new Point(600,400);app.trackedItems=new Point(510,400);
+                app.trackedWidth=frame.Width;app.trackedHeight=frame.Height;
+                var area=new Rectangle(140,25,230,25);
+                var box=new Rectangle(50,20,580,410);
+                var chrome=new ChromeReading {Kind=ChromeKind.Battle,Header=new Rectangle(50,20,580,35),BattleBox=box,GoldX=300};
+                app.trackedBattleBox=box;
+                app.confirmedOpponent=new RunButtonCandidate {IdentityBounds=area};
+                app.confirmedOpponentPixels=VerifiedHeader.Signature(frame,area);
+                app.readyEscape.Observe(ControlReady.Ready,4);
+                if(app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("Fast Run needs a completed encounter screening");
+                app.screenedOpponentPixels=app.confirmedOpponentPixels;
+                app.screenedFeed=LocalOcr.EncounterFeedHighlights(frame);
+                if(!app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("The first ready frame should authorize prechecked Run");
+                int feedX=(int)(frame.Width*.83),timeX=(int)(frame.Width*.67),feedY=(int)(frame.Height*.92);
+                frame.SetPixel(feedX,feedY,Color.FromArgb(25,44,71));
+                if(!app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("Changing chat background must not delay Run");
+                frame.SetPixel(feedX,feedY,Color.White);
+                if(!app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("Ordinary chat must not delay Run");
+                using(var draw=Graphics.FromImage(frame))draw.FillRectangle(Brushes.Red,feedX,feedY,9,4);
+                if(!app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("Color outside a timestamped text line must not delay Run");
+                using(var draw=Graphics.FromImage(frame))draw.FillRectangle(Brushes.White,timeX,feedY,12,4);
+                if(app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("New rare-form highlight must be screened before Fast Run");
+                app.screenedFeed=LocalOcr.EncounterFeedHighlights(frame);
+                using(var draw=Graphics.FromImage(frame)) {
+                    draw.FillRectangle(Brushes.Black,feedX,feedY,9,4);
+                    draw.FillRectangle(Brushes.Black,timeX,feedY,12,4);
+                    draw.FillRectangle(Brushes.Red,feedX,feedY-12,9,4);
+                    draw.FillRectangle(Brushes.White,timeX,feedY-12,12,4);
+                }
+                if(!app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("A checked rare-form line scrolling upward must not delay Run");
+                app.scanning=true;
+                if(app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("Pending OCR must block Fast Run");
+                app.scanning=false;app.rareCatchPending=true;
+                if(app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("Rare encounters must always block Fast Run");
+                app.rareCatchPending=false;app.stableName="mimikyu";
+                if(app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("Protected targets must always block Fast Run");
+                app.stableName="slowking";frame.SetPixel(area.X+1,area.Y+1,Color.White);
+                if(app.CanUseCheckedEscape(frame,chrome,4))throw new Exception("Changed caption must require fresh OCR");
+                app.ResetControls();
+                if(app.screenedOpponentPixels!=null || app.CanUseCheckedEscape(frame,chrome,4))
+                    throw new Exception("Reset must revoke prechecked Run");
+            }
+            return "PASS: Run can dispatch on the first ready frame after dialogue screening; pending, rare, protected, changed and reset states block the shortcut";
+        }
+        void ClickReadyButton(string name,Point point,bool reusedScreening=false) {
+            if(rareCatchPending || catchFlow.Active || EncounterRecognition.CloseToTarget(name,desiredNames))throw new InvalidOperationException("Run blocked for protected/catching encounter.");
+            double dispatchedAt=Native.ClickClient(output.Target,output.Process,point,clock);
             escapeAttempts++;waitSince=clock.Elapsed.TotalSeconds;readyEscape.Submitted(waitSince);
-            Activity("RUN: ready-control button clicked for "+name+"; "+Math.Round((waitSince-readyEscape.ReadyAt)*1000)+"ms after ready observed; accepted="+readyEscape.Accepted+(reusedHeader ? "; exact verified heading reused" : ""));
+            Activity("RUN: ready-control button clicked for "+name+"; "+Math.Round((waitSince-readyEscape.ReadyAt)*1000)+
+                "ms after ready observed; mouse-down="+Math.Round((dispatchedAt-readyEscape.ReadyAt)*1000)+
+                "ms; accepted="+readyEscape.Accepted+(reusedScreening ? "; reused encounter screening" : ""));
             LogFirstEscape();
         }
         VisualDecision visualDecision=VisualDecision.ValidateWorld;
@@ -329,7 +436,10 @@ namespace MovementPrototype {
         string lastReadingSummary="";
         void Activity(string message) {
             try {
-                if(File.Exists(activityPath) && new FileInfo(activityPath).Length>131072) File.WriteAllText(activityPath,"Log restarted at size limit.\n");
+                if(File.Exists(activityPath) && new FileInfo(activityPath).Length>131072) {
+                    File.Copy(activityPath,Path.ChangeExtension(activityPath,"previous.log"),true);
+                    File.WriteAllText(activityPath,"Log restarted at size limit.\n");
+                }
                 File.AppendAllText(activityPath,DateTimeOffset.Now.ToString("o")+"  "+message+Environment.NewLine);
             } catch(IOException) { } catch(UnauthorizedAccessException) { }
         }
@@ -342,7 +452,9 @@ namespace MovementPrototype {
         readonly CheckBox external = new CheckBox { Text="Enable keyboard input for an authorized test window", AutoSize=true };
         readonly CheckBox background = new CheckBox { Text="Keep moving when I click another window (experimental)", AutoSize=true };
         readonly CheckBox autoFocus = new CheckBox { Text="Return focus to the selected window automatically", AutoSize=true };
+#if !LINUX
         readonly Label backgroundNote = new Label { Text="Auto-return takes focus from other apps. F8 stops; F10 is emergency stop.\nA minimized/closed target or a blocked focus request stops the run.", AutoSize=true, MaximumSize=new Size(570,0) };
+#endif
         readonly Label target = new Label { Text="No target selected", AutoSize=true };
         readonly Label state = new Label { AutoSize=true, Font=new Font("Segoe UI",12,FontStyle.Bold) };
         readonly Label detail = new Label { AutoSize=true };
@@ -390,7 +502,8 @@ namespace MovementPrototype {
             }
             first.SelectedIndex=0; second.SelectedIndex=1;
             flow.Controls.Add(Row("First key",first,"Second key",second));
-            flow.Controls.Add(Row("Hold (sec)",hold,"Gap (sec)",gap));
+            flow.Controls.Add(Row("Hold (sec)", "Min",minHold,"Max",maxHold));
+            flow.Controls.Add(Row("Gap (sec)", "Min",minGap,"Max",maxGap));
             flow.Controls.Add(Row("Run limit (sec)",limit));
             flow.Controls.Add(untilStop);
             flow.Controls.Add(continueRepel);
@@ -412,7 +525,13 @@ namespace MovementPrototype {
             };
             untilStop.CheckedChanged += delegate { RefreshState(); };
             continueRepel.CheckedChanged += delegate {repelPolicy.Reset();Activity("REPEL OPTION: "+(continueRepel.Checked ? "enabled" : "disabled"));};
-            flow.Controls.Add(external);if(!managedMode) {flow.Controls.Add(autoFocus);flow.Controls.Add(backgroundNote);}
+            flow.Controls.Add(external);
+            if(!managedMode) {
+                flow.Controls.Add(autoFocus);
+#if !LINUX
+                flow.Controls.Add(backgroundNote);
+#endif
+            }
             flow.Controls.Add(capture); flow.Controls.Add(targets); flow.Controls.Add(target);
             flow.Controls.Add(new Label { Text="PRO prohibits unauthorized bots and macros. Use live input only within\nexplicit staff-approved test scope. Selecting a window is not authorization.", AutoSize=true, ForeColor=Color.DarkRed });
             flow.Controls.Add(practice); flow.Controls.Add(log);
@@ -461,14 +580,14 @@ namespace MovementPrototype {
         public bool Available {get{return output.Available();}}
         public bool Reading {get{return scanning;}}
         public double ReadAllowance {get{return catchFlow.Active ? 2.5 : .8;}}
-        public bool Waiting {get{return managedWaiting && managedReadinessObserved;}}
+        public bool Waiting {get{return managedWaiting && managedReadinessObserved && (!rareCatchPending || catchFlow.Active);}}
         public bool ManagedShiftHeld {get{return escapeHeld;}}
         public bool ManagedLatched {get{return controller.Latched;}}
         public void PrepareManaged(string protectedTarget,uint process,bool renewRepel) {
             EncounterRecognition.Targets(protectedTarget);WindowChoice match=null;int count=0;
             foreach(WindowChoice choice in targets.Items)if(choice.Process==process && choice.Title=="PROClient") {match=choice;count++;}
             if(count!=1)throw new InvalidOperationException("Select exactly one visible PRO window for process "+process);
-            targets.SelectedItem=match;targetNames.Text=protectedTarget;hold.Value=.30m;gap.Value=.05m;
+            targets.SelectedItem=match;targetNames.Text=protectedTarget;minHold.Value=maxHold.Value=.30m;minGap.Value=maxGap.Value=.05m;
             untilStop.Checked=true;external.Checked=true;encounters.Checked=true;continueRepel.Checked=renewRepel;
             controller.Stop("Ready — shared controller starts with F8");RefreshState();
             Activity("PROFILE: protected="+protectedTarget+"; repel="+renewRepel+"; process="+process);
@@ -493,7 +612,7 @@ namespace MovementPrototype {
             finally {
                 output.LeaseGranted=false;generation++;stableCount=0;stableName="";
                 if(catchFlow.Active) {if(catchInputPending)StopCatch("Stopped — foreground turn ended before the catching action was delivered");else catchFlow.Suspend();}
-                verifiedHeaderSignature=verifiedHeaderName=null;verifiedHeadingArea=null;
+                confirmedOpponent=null;confirmedOpponentPixels=screenedOpponentPixels=null;screenedFeed=null;chatNeedsCheck=false;screenedAnnouncementText="";
                 managedResumePending=scene.InBattle;readyEscape.Observe(ControlReady.Unknown,clock.Elapsed.TotalSeconds);
                 repelPolicy.Suspend();scene.Reset();visualDecision=VisualDecision.ValidateWorld;lastChrome=ChromeKind.Transition;nextProbe=nextScan=0;
                 if(!controller.Running)managedArmed=false;RefreshState();
@@ -520,7 +639,7 @@ namespace MovementPrototype {
             }
             if(count!=1) throw new InvalidOperationException("Open exactly one PROClient window before preparing automatic mode.");
             targets.SelectedItem=match; targetNames.Text=protectedTarget;
-            hold.Value=.30m;gap.Value=.05m;
+            minHold.Value=maxHold.Value=.30m;minGap.Value=maxGap.Value=.05m;
             untilStop.Checked=true; external.Checked=true; encounters.Checked=true; autoFocus.Checked=true;
             continueRepel.Checked=renewRepel;
             controller.Stop("Ready — external input armed; press F8 in PRO");
@@ -602,7 +721,7 @@ namespace MovementPrototype {
             });
         }
         void StartRun() {
-            ValidateCatch();catchFlow.Reset();nextCatchScan=0;catchBusy=false;catchWorld.Reset();
+            ValidateCatch();catchFlow.Reset();rareCatchPending=false;nextCatchScan=0;catchBusy=false;catchWorld.Reset();
             generation++; stableName=""; stableCount=0; escapeAttempts=0;
             managedResumePending=managedBattleContinuity=managedWaiting=managedReadinessObserved=false;
             repelPolicy.Reset();repelReads=repelClicks=0;
@@ -619,7 +738,7 @@ namespace MovementPrototype {
         void ReleaseEscape() { runKey.Release(); }
         void StopAll(string reason) { lastError=null; pendingStart=false; previewPending=false;catchPreviewPending=false; generation++;repelPolicy.Reset();if(catchFlow.Active)catchFlow.Cancel(reason); try { controller.Stop(reason); } finally { ReleaseEscape(); SaveVisualStats(); } }
         void EmergencyAll() { lastError=null; pendingStart=false; previewPending=false;catchPreviewPending=false; generation++;repelPolicy.Reset();if(catchFlow.Active)catchFlow.Cancel("Emergency stop"); try { controller.Emergency(); } finally { ReleaseEscape(); SaveVisualStats(); } }
-        Settings ReadSettings() { return new Settings { First=(Keys)first.SelectedItem, Second=(Keys)second.SelectedItem, Hold=(double)hold.Value, Gap=(double)gap.Value, Limit=(double)limit.Value, UntilStopped=untilStop.Checked, AutoFocus=!managedMode && autoFocus.Checked && output.External && !output.Background }; }
+        Settings ReadSettings() { return new Settings { First=(Keys)first.SelectedItem, Second=(Keys)second.SelectedItem, Hold=(double)minHold.Value, MaxHold=(double)maxHold.Value, Gap=(double)minGap.Value, MaxGap=(double)maxGap.Value, Limit=(double)limit.Value, UntilStopped=untilStop.Checked, AutoFocus=!managedMode && autoFocus.Checked && output.External && !output.Background }; }
         void Guard(Action action) {
             try { action(); }
             catch(Exception ex) {
@@ -633,6 +752,14 @@ namespace MovementPrototype {
         }
         void Tick() {
             if(closing) return;
+#if LINUX
+            if(!managedMode && hotkeys) {
+                foreach(int id in Native.PollHotKeys(Handle)) {
+                    if(id==1)Toggle(true);
+                    if(id==2)Guard(delegate {EmergencyAll();});
+                }
+            }
+#endif
             if(previewPending && clock.Elapsed.TotalSeconds>=previewAt) { previewPending=false;bool forCatch=catchPreviewPending;catchPreviewPending=false;if(forCatch)ScanCatch(true);else ScanEncounter(true); }
             if(!hotkeys && !controller.Running && !pendingStart && clock.Elapsed.TotalSeconds>=nextHotkeyRetry) {
                 nextHotkeyRetry=clock.Elapsed.TotalSeconds+1; RegisterShortcuts();
@@ -653,7 +780,8 @@ namespace MovementPrototype {
                 }
                 if(now>=nextProbe) { nextProbe=now+.08; Guard(ProbeScene); }
                 bool waitingForDialogue=managedMode && managedWaiting && readyEscape.State==ControlReady.Busy;
-                bool needName=encounters.Checked && !waitingForDialogue && !repelPolicy.Active && visualDecision==VisualDecision.ReadBattle && (stableCount<2 || !trackedRun.HasValue || readyEscape.Due(now) || readyEscape.StopRequired(now));
+                bool needName=encounters.Checked && !repelPolicy.Active && visualDecision==VisualDecision.ReadBattle &&
+                    (rareCatchPending || !waitingForDialogue && (stableCount<2 || !trackedRun.HasValue || chatNeedsCheck || readyEscape.Due(now) || readyEscape.StopRequired(now)));
                 if(controller.Running && !scanning && now>=nextScan && needName) ScanEncounter();
                 if(now>=nextVisualStats) {nextVisualStats=now+5;SaveVisualStats();}
             }
@@ -673,6 +801,7 @@ namespace MovementPrototype {
             if(!continueRepel.Checked) {
                 repelPolicy.Reset();
                 if(!bounds.HasValue)return false;
+                if(visualDecision!=VisualDecision.Pause)Activity("REPEL: dialog visible with renewal disabled");
                 controller.Pause(true,clock.Elapsed.TotalSeconds);ReleaseEscape();
                 visualDecision=scene.Observe(ChromeKind.Transition,clock.Elapsed.TotalSeconds);lastChrome=ChromeKind.Transition;
                 encounterStatus.Text="Repel expired — renewal is OFF. Dismiss the prompt manually; no item input sent.";
@@ -738,7 +867,10 @@ namespace MovementPrototype {
             ChromeReading chrome;
             using(var image=Native.CaptureClient(output.Target)) {
                 chrome=visual.Detect(image);
-                if(WatchRepel(image,chrome)) {visualProbes++;visualMs+=(clock.Elapsed.TotalSeconds-began)*1000;return;}
+                if(chrome.Kind!=ChromeKind.Battle) {
+                    screenedOpponentPixels=null;screenedFeed=null;chatNeedsCheck=false;screenedAnnouncementText="";
+                }
+                if(!rareCatchPending && WatchRepel(image,chrome)) {visualProbes++;visualMs+=(clock.Elapsed.TotalSeconds-began)*1000;return;}
                 if(encounters.Checked && chrome.Kind==ChromeKind.Battle && (scene.InBattle || managedResumePending)) {
                     WatchControls(image,chrome);
                     if(managedMode && trackedRun.HasValue)managedReadinessObserved=true;
@@ -746,10 +878,14 @@ namespace MovementPrototype {
             }
             visualProbes++;visualMs+=(clock.Elapsed.TotalSeconds-began)*1000;
             var previous=visualDecision;
+            if(chrome.Kind==ChromeKind.Transition && previous==VisualDecision.Move)
+                Activity("VISUAL: interrupted world; HUD rows="+chrome.HudRows+"; sprites="+chrome.ColorRows);
             bool enteringBattle=chrome.Kind==ChromeKind.Battle && !scene.InBattle;
             if(chrome.Kind==ChromeKind.Clear && lastChrome!=ChromeKind.Clear)clearStarted=clock.Elapsed.TotalSeconds;
             lastChrome=chrome.Kind;
-            visualDecision=scene.Observe(chrome.Kind,clock.Elapsed.TotalSeconds);
+            double now=clock.Elapsed.TotalSeconds;
+            if(rareCatchPending && chrome.Kind==ChromeKind.Battle)lastRareBattleSeen=now;
+            visualDecision=scene.Observe(chrome.Kind,now);
             if(enteringBattle) {
                 if(!managedMode || !managedBattleContinuity) {visualBattles++;battleStarted=clock.Elapsed.TotalSeconds;firstEscapeLogged=false;}
                 managedBattleContinuity=true;
@@ -758,6 +894,12 @@ namespace MovementPrototype {
                 Activity("VISUAL: battle panel appeared; "+(encounters.Checked ? "name OCR enabled" : "movement paused; encounter handling off"));
             }
             if(visualDecision==VisualDecision.Move) {
+                if(rareCatchPending) {
+                    controller.Pause(true,now);
+                    encounterStatus.Text="Rare form detected — waiting for the battle to be visible.";
+                    if(now-lastRareBattleSeen>=12)StopForRareEncounter("battle could not be reconfirmed");
+                    return;
+                }
                 managedResumePending=managedBattleContinuity=false;
                 bool resume=controller.Paused;
                 controller.Pause(false,clock.Elapsed.TotalSeconds);
@@ -779,9 +921,9 @@ namespace MovementPrototype {
             state.Text=previewPending ? "Reading in " + Math.Max(0,Math.Ceiling(previewAt-clock.Elapsed.TotalSeconds)) + "s — switch to PRO (no keys)" : pendingStart ? "Starting in " + Math.Max(0,Math.Ceiling(captureAt-clock.Elapsed.TotalSeconds)) + "s — switch to selected window" : controller.Status;
             if(lastError!=null && !controller.Running && !pendingStart && !previewPending) state.Text="Stopped — " + lastError;
             state.ForeColor=controller.Latched ? Color.Firebrick : Color.DarkSlateGray;
-            detail.Text=managedMode ? (managedArmed ? (output.LeaseGranted ? "Shared input — this window has focus" : "Shared input — waiting for this window's turn") : "Two-window profile — input starts only from the shared controls") : hotkeys ? (output.External ? (autoFocus.Checked ? "EXTERNAL INPUT — auto-return requested; Windows may refuse" : "EXTERNAL INPUT — focus loss stops the run") : "PRACTICE — no Windows key events") : "F8/F10 busy — close another controller or shortcut app. Retrying automatically.";
+            detail.Text=managedMode ? (managedArmed ? (output.LeaseGranted ? "Shared input — this window has focus" : "Shared input — waiting for this window's turn") : "Two-window profile — input starts only from the shared controls") : hotkeys ? (output.External ? (autoFocus.Checked ? "EXTERNAL INPUT — auto-return requested; Windows may refuse" : "EXTERNAL INPUT — focus loss stops the run") : "PRACTICE — no external key events") : "F8/F10 busy — close another controller or shortcut app. Retrying automatically.";
             bool edit=!managedArmed && !controller.Running && !controller.Held.HasValue && !pendingStart && !escapeHeld && !previewPending && !scanning;
-            foreach(Control c in new Control[] {first,second,hold,gap,external,capture,targets,untilStop,background,autoFocus,targetNames}) c.Enabled=edit;
+            foreach(Control c in new Control[] {first,second,minHold,maxHold,minGap,maxGap,external,capture,targets,untilStop,background,autoFocus,targetNames}) c.Enabled=edit;
             continueRepel.Enabled=edit && !background.Checked;
             encounters.Enabled=edit && !background.Checked;
             clickFallback.Enabled=edit && !background.Checked;
@@ -804,7 +946,9 @@ namespace MovementPrototype {
             nextScan=capturedAt+.08;
             try {
                 string text;RunButtonCandidate candidate=null;ChromeReading frameChrome=null;
-                int frameWidth=0,frameHeight=0;bool capturedReady=false;string headerSignature=null;Rectangle? headingArea=null;ChromeReading previewScene=null;
+                int frameWidth=0,frameHeight=0;bool rareEncounter=false;string headerSignature=null,announcement=null,feedText="";
+                HashSet<ulong> feedHighlights=null;
+                var capturedWallTime=DateTime.Now;Rectangle? headingArea=null;ChromeReading previewScene=null;
                 using(var image=Native.CaptureClient(output.Target)) {
                     if(previewOnly) {previewScene=visual.Detect(image);frameWidth=image.Width;frameHeight=image.Height;text=await LocalOcr.ReadGame(image,true);}
                     else if(visualDecision==VisualDecision.ReadBattle) {
@@ -813,15 +957,44 @@ namespace MovementPrototype {
                         if(chrome.Kind!=ChromeKind.Battle)return;
                         battleOcrCalls++;
                         bool reuse=SameControls(image,chrome);
-                        candidate=await LocalOcr.ReadBattle(image,chrome.Header,stableCount>=1 && !reuse,chrome.BattleBox.HasValue ? (Rectangle?)BattleRegions.Menu(chrome,image.Size) : null);
+                        var notice=LocalOcr.ReadRareEncounterNotice(image);
+                        var feedArea=LocalOcr.EncounterFeedArea(image.Size);
+                        feedHighlights=LocalOcr.EncounterFeedHighlights(image);
+                        var feed=screenedFeed==null || !feedHighlights.IsSubsetOf(screenedFeed)
+                            ? LocalOcr.ReadRareEncounterFeed(image,feedArea)
+                            : Task.FromResult("");
+                        bool useConfirmed=(rareCatchPending || reuse && stableCount>=2) && confirmedOpponent!=null &&
+                            confirmedOpponent.IdentityBounds.HasValue && chrome.Header.Contains(confirmedOpponent.IdentityBounds.Value) &&
+                            VerifiedHeader.Signature(image,confirmedOpponent.IdentityBounds.Value)==confirmedOpponentPixels;
+                        var opponent=useConfirmed ? System.Threading.Tasks.Task.FromResult(confirmedOpponent) :
+                            LocalOcr.ReadBattle(image,chrome.Header,stableCount>=1 && !reuse,
+                                chrome.BattleBox.HasValue ? (Rectangle?)BattleRegions.Menu(chrome,image.Size) : null);
+                        await System.Threading.Tasks.Task.WhenAll(notice,opponent,feed);
+                        rareEncounter=notice.Result;
+                        candidate=opponent.Result;
                         headingArea=candidate.IdentityBounds ?? chrome.Header;
                         headerSignature=VerifiedHeader.Signature(image,headingArea.Value);
                         if(reuse) {candidate.ClientPoint=trackedRun;candidate.ItemsPoint=trackedItems;}
-                        if(candidate.ClientPoint.HasValue && candidate.ItemsPoint.HasValue)capturedReady=BattleControlReady.Read(image,candidate.ClientPoint.Value,candidate.ItemsPoint.Value)==ControlReady.Ready;
                         text="[Encounter header]\n"+candidate.Header+"\n[Battle controls]\n"+candidate.Controls+"\n[Full screen]\n";
+                        feedText=screenedAnnouncementText;
+                        if(feed.Result.Length>0) {
+                            feedText+="\n"+feed.Result;
+                            if(feedText.Length>12000)feedText=feedText.Substring(feedText.Length-12000);
+                        }
+                        if(!rareEncounter) {
+                            var identity=EncounterRecognition.Parse(text);
+                            if(!identity.Ambiguous)announcement=EncounterRecognition.RareEncounterAnnouncement(candidate.Header,
+                                feedText,identity.Name,capturedWallTime.AddSeconds(battleStarted-capturedAt),capturedWallTime);
+                        }
                 } else return;
                 }
                 if(closing || run!=generation || (!previewOnly && !controller.Running)) return;
+                if(rareEncounter) ProtectRareEncounter();
+                if(announcement!=null && announcement!=lastRareAnnouncement && visualEpoch==scene.Epoch) {
+                    lastRareAnnouncement=announcement;
+                    Activity("RARE ENCOUNTER: own battle matches fresh chat announcement");
+                    ProtectRareEncounter();
+                }
                 if(!previewOnly && (visualEpoch!=scene.Epoch || (candidate!=null && lastChrome!=ChromeKind.Battle)))return;
                 if(clock.Elapsed.TotalSeconds-capturedAt>2.5) { StopAll("Stopped — recognition too slow; check manually"); return; }
                 if(!output.Foreground() || !output.Available() || (!previewOnly && !output.Ready())) {
@@ -829,8 +1002,14 @@ namespace MovementPrototype {
                     else StopAll("Stopped — target lost focus during reading");
                     return;
                 }
-                if(candidate!=null && candidate.ClientPoint.HasValue && candidate.ItemsPoint.HasValue && !trackedRun.HasValue) {
-                    trackedRun=candidate.ClientPoint;trackedItems=candidate.ItemsPoint;trackedWidth=frameWidth;trackedHeight=frameHeight;trackedGoldX=frameChrome.GoldX;trackedHeaderY=frameChrome.Header.Top;
+                if(!rareCatchPending && feedHighlights!=null) {
+                    if(screenedFeed==null)screenedFeed=new HashSet<ulong>();
+                    screenedFeed.UnionWith(feedHighlights);
+                    screenedAnnouncementText=feedText;
+                    chatNeedsCheck=false;
+                }
+                if(!rareCatchPending && candidate!=null && candidate.ClientPoint.HasValue && candidate.ItemsPoint.HasValue && !trackedRun.HasValue) {
+                    trackedRun=candidate.ClientPoint;trackedItems=candidate.ItemsPoint;trackedWidth=frameWidth;trackedHeight=frameHeight;trackedGoldX=frameChrome.GoldX;trackedHeaderY=frameChrome.Header.Top;trackedBattleBox=frameChrome.BattleBox;
                     using(var fresh=Native.CaptureClient(output.Target)) {
                         var current=visual.Detect(fresh);
                         if(current.Kind!=ChromeKind.Battle || !SameControls(fresh,current)) {ResetControls();return;}
@@ -848,7 +1027,7 @@ namespace MovementPrototype {
                     Activity("SCENE CHECK: "+sceneCheck+"; "+visual.HudDiagnostic);
                     encounterStatus.Text="Read-only: " + sceneCheck + "; opponent: " + (reading.Name ?? "unreadable") + ". No keys sent.";
                     log.Items.Insert(0,encounterStatus.Text);
-                } else ApplyReading(reading,candidate,capturedAt,capturedReady,headerSignature,headingArea);
+                } else ApplyReading(reading,candidate,capturedAt,headerSignature,headingArea,rareEncounter);
             } catch(Exception ex) {
                 if(!closing && run==generation) {
                     if(controller.Running && autoFocus.Checked && !output.Foreground()) {
@@ -861,6 +1040,23 @@ namespace MovementPrototype {
                 }
             } finally { scanning=false; if(!closing) RefreshState(); }
         }
+        void ProtectRareEncounter() {
+            if(rareCatchPending)return;
+            rareCatchPending=true;
+            lastRareBattleSeen=clock.Elapsed.TotalSeconds;
+            stableCount=0;stableName="";
+            confirmedOpponent=null;confirmedOpponentPixels=screenedOpponentPixels=null;screenedFeed=null;chatNeedsCheck=false;screenedAnnouncementText="";
+            readGrace.Reset();
+            ReleaseEscape();
+            controller.Pause(true,clock.Elapsed.TotalSeconds);
+            Activity("RARE ENCOUNTER: escape disabled for this battle");
+        }
+        void StopForRareEncounter(string detail) {
+            string reason="RARE ENCOUNTER — "+detail;
+            StopAll(reason);
+            encounterStatus.Text=reason;
+            NotifyCatch("Check rare encounter",detail+"; handle the encounter in PRO.");
+        }
         void StopForTarget(string name) {
             bool exact=desiredNames.Contains(name);
             StopAll(exact ? "TARGET FOUND — " + name : "Stopped — name resembles a target; check manually");
@@ -870,44 +1066,75 @@ namespace MovementPrototype {
                 tray.ShowBalloonTip(10000); Native.Flash(TopLevelControl==null ? Handle : TopLevelControl.Handle); System.Media.SystemSounds.Exclamation.Play();
             }
         }
-        void ApplyReading(EncounterReading reading,RunButtonCandidate candidate=null,double capturedAt=0,bool capturedReady=false,string headerSignature=null,Rectangle? headingArea=null) {
+        void ApplyReading(EncounterReading reading,RunButtonCandidate candidate=null,double capturedAt=0,string headerSignature=null,Rectangle? headingArea=null,bool rareNoticeVisible=false) {
             double now=clock.Elapsed.TotalSeconds;
             if(reading.Battle) {
                 controller.Pause(true,now);
                 encounterStatus.Text="Battle detected — movement paused. Read: " + (reading.Name ?? "unreadable");
+                if(rareCatchPending) {
+                    bool freshOpponent=!reading.Ambiguous && reading.Name!=null && headingArea.HasValue && headerSignature!=null && now-capturedAt<=1.5;
+                    if(freshOpponent) {
+                        confirmedOpponent=candidate;
+                        confirmedOpponentPixels=headerSignature;
+                        readGrace.Reset();
+                    }
+                    if(rareNoticeVisible) {
+                        encounterStatus.Text="Rare form detected — waiting for the notice to close.";
+                    } else if(freshOpponent) {
+                        BeginCatch(reading.Name,headingArea,headerSignature,true);
+                    } else {
+                        encounterStatus.Text="Rare form detected — reading opponent.";
+                        if(readGrace.Expired(now))StopForRareEncounter("opponent name could not be confirmed");
+                    }
+                    return;
+                }
                 if(reading.Name==null || reading.Ambiguous) {
                     stableCount=0; stableName="";
                     encounterStatus.Text="Reading opponent — movement paused; retrying automatically. No escape sent.";
-                    if(readGrace.Expired(now)) StopAll("Stopped — opponent unreadable for 10 seconds; no escape sent");
+                    if(readGrace.Expired(now))StopAll("Stopped — opponent unreadable for 10 seconds; no escape sent");
                     return;
                 }
                 readGrace.Reset();
+                if(reading.Name==stableName)stableCount++;
+                else {stableName=reading.Name;stableCount=1;}
                 if(EncounterRecognition.CloseToTarget(reading.Name,desiredNames)) {
                     if(autoCatch.Checked && desiredNames.Contains(reading.Name)) {
-                        if(reading.Name==stableName)stableCount++;else {stableName=reading.Name;stableCount=1;}
                         if(stableCount<2) {encounterStatus.Text="Target seen — confirming exact name before catching.";return;}
                         BeginCatch(reading.Name,headingArea,headerSignature);return;
                     }
                     StopForTarget(reading.Name);
                     return;
                 }
-                if(reading.Name==stableName) stableCount++; else { stableName=reading.Name; stableCount=1; }
                 if(stableCount<2) { waitSince=now; return; }
-                if(headerSignature!=null && now-capturedAt<=1) {verifiedHeaderSignature=headerSignature;verifiedHeaderName=reading.Name;verifiedHeadingArea=headingArea;}
-                if(trackedRun.HasValue) {
-                    if(readyEscape.StopRequired(now)) {StopAll("Stopped — ready-control escape attempts exhausted");return;}
-                    if(!capturedReady || !readyEscape.Due(now)) {encounterStatus.Text="Non-target confirmed — waiting for ready battle controls.";return;}
-                } else if(readyEscape.KeyboardLimit(now)) {StopAll("Stopped — keyboard escape requests were not confirmed");return;}
-                // Two exact cropped VS/Wild species readings identify the encounter.
-                // Small icon labels can be unreadable even while the run shortcut works.
-                bool shiftDue=!escapeHeld && (trackedRun.HasValue ? readyEscape.Due(now) : readyEscape.KeyboardDue(now));
-                if(!shiftDue)return;
-                if(!output.Ready()) { StopAll("Stopped — target lost focus"); return; }
-                if(output.Busy())return;
-                if(candidate!=null && clickFallback.Checked && candidate.ClientPoint.HasValue && now-capturedAt<=1 && RunButtonMatch.AllowsOpponent(stableName,reading,desiredNames)) {
-                    ClickReadyButton(reading.Name,candidate.ClientPoint.Value,false);return;
+                if(headerSignature==null || !headingArea.HasValue) return;
+                confirmedOpponent=candidate;
+                confirmedOpponentPixels=headerSignature;
+                if(screenedFeed!=null)screenedOpponentPixels=headerSignature;
+                if(escapeHeld || !output.Ready() || output.Busy())return;
+                using(var fresh=Native.CaptureClient(output.Target)) {
+                    if(!new Rectangle(Point.Empty,fresh.Size).Contains(headingArea.Value) ||
+                        VerifiedHeader.Signature(fresh,headingArea.Value)!=headerSignature ||
+                        screenedFeed==null || !LocalOcr.EncounterFeedHighlights(fresh).IsSubsetOf(screenedFeed))return;
+                    var current=visual.Detect(fresh);
+                    if(current.Kind!=ChromeKind.Battle || !current.Header.Contains(headingArea.Value))return;
+                    if(trackedRun.HasValue) {
+                        if(!SameControls(fresh,current))return;
+                        var controls=BattleControlReady.Read(fresh,trackedRun.Value,trackedItems.Value);
+                        readyEscape.Observe(controls,now);
+                        if(readyEscape.StopRequired(now)) {StopAll("Stopped \u2014 ready-control escape attempts exhausted");return;}
+                        if(!readyEscape.Due(now)) {
+                            encounterStatus.Text="Non-target confirmed \u2014 waiting for ready battle controls.";
+                            return;
+                        }
+                        if(clickFallback.Checked) {
+                            ClickReadyButton(reading.Name,trackedRun.Value);
+                            return;
+                        }
+                    } else {
+                        if(readyEscape.KeyboardLimit(now)) {StopAll("Stopped \u2014 keyboard escape requests were not confirmed");return;}
+                        if(!readyEscape.KeyboardDue(now))return;
+                    }
                 }
-                if(!shiftDue) return;
                 runKey.Press(now);
                 readyEscape.Submitted(now);
                 LogFirstEscape();
@@ -930,8 +1157,13 @@ namespace MovementPrototype {
     static class Program {
         [STAThread] static int Main(string[] args) {
             Native.SetProcessDPIAware();
+#if LINUX
+            if(args.Length==2 && args[0]=="--linux-desktop-test")return LinuxDesktopTests.Run(args[1]);
+#endif
             if(args.Length>0 && args[0]=="--self-test") return Tests.Run(args.Length>1 ? args[1] : "test-results.txt");
+#if !LINUX
             if(args.Length>1 && args[0]=="--background-test") return Tests.BackgroundTest(args[1]);
+#endif
             if(args.Length>1 && args[0]=="--ocr-test") return Tests.OcrTest(args[1]);
             if(args.Length>2 && args[0]=="--repel-image-test") return Tests.RepelImageTest(args[1],args[2],args.Length==4 && args[3]=="--expect-reject");
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
@@ -1071,6 +1303,42 @@ namespace MovementPrototype {
             results.Add("PASS: modifier safety and encounter pause remain active with auto-return enabled");
             return results;
         }
+        sealed class TestTimingRandom : Random {
+            readonly Queue<double> samples;
+            public TestTimingRandom(params double[] sequence) {samples=new Queue<double>(sequence);}
+            public override double NextDouble() {return samples.Dequeue();}
+        }
+        static string MovementRangeTest() {
+            var output=new Fake();
+            var controller=new Controller(output,new TestTimingRandom(0,.75,.5,0,.25));
+            var settings=new Settings {Hold=.2,MaxHold=.6,Gap=.1,MaxGap=.3,UntilStopped=true};
+            controller.Start(settings,0);
+            settings.MaxHold=.2; // Active timing retains the settings it started with.
+            controller.Tick(.199);Check(controller.Held==Keys.Left,"First sample is the minimum hold");
+            controller.Tick(.2);Check(!controller.Held.HasValue,"First hold releases at its sample");
+            controller.Tick(.449);Check(!controller.Held.HasValue,"First gap waits for its own sample");
+            controller.Tick(.45);Check(controller.Held==Keys.Right,"Second key starts at the sampled gap");
+            controller.Tick(.849);Check(controller.Held==Keys.Right,"Second hold samples a new duration");
+            controller.Tick(.851);Check(!controller.Held.HasValue,"Second hold releases");
+            controller.Tick(.950);Check(!controller.Held.HasValue,"Second gap samples independently");
+            controller.Tick(.952);Check(controller.Held==Keys.Left,"Alternation continues after the next gap");
+            controller.Emergency();Check(!controller.Held.HasValue && controller.Latched,"Emergency stop releases a sampled hold");
+
+            controller=new Controller(new Fake(),new TestTimingRandom());
+            controller.Start(new Settings {Hold=.2,MaxHold=.2,Gap=.1,MaxGap=.1},0);
+            controller.Tick(.2);controller.Tick(.31);
+            Check(controller.Held==Keys.Right,"Equal endpoints keep fixed timing without sampling");
+            controller.Stop("Done");
+            foreach(var invalid in new Settings[] {
+                new Settings {Hold=.8,MaxHold=.7},new Settings {Gap=.15,MaxGap=.1},
+                new Settings {MaxHold=Double.NaN},new Settings {MaxGap=5.01}
+            }) {
+                bool rejected=false;
+                try {invalid.Validate();} catch(ArgumentException) {rejected=true;}
+                Check(rejected,"Invalid timing ranges must be rejected");
+            }
+            return "PASS: hold and gap independently resample within bounds, equal endpoints stay fixed, and emergency stop releases held input";
+        }
         static void Check(bool ok, string label) { if(!ok) throw new Exception(label); }
         public static int BackgroundTest(string path) {
             var lines=new List<string>();
@@ -1104,6 +1372,7 @@ namespace MovementPrototype {
                 var f=new Fake(); var c=new Controller(f); var s=new Settings { Hold=0.5, Gap=0.1, Limit=2 };
                 c.Start(s,0); Check(c.Held==Keys.Left,"first key"); c.Tick(0.5); Check(c.Held==null,"release before gap"); c.Tick(0.6); Check(c.Held==Keys.Right,"reverse"); c.Tick(1.1); c.Tick(1.21); Check(c.Held==Keys.Left,"repeat");
                 results.Add("PASS: alternating keys with release and gap");
+                results.Add(MovementRangeTest());
                 c.Tick(2); Check(!c.Running && c.Held==null,"limit"); results.Add("PASS: run limit releases held key");
                 c.Start(s,3); f.Focus=false; c.Tick(3.01); Check(!c.Running && c.Held==null,"focus"); results.Add("PASS: focus loss stops and releases");
                 bool rejected=false; try { c.Start(s,4); } catch(InvalidOperationException) { rejected=true; } Check(rejected && !c.Latched && !c.Running,"focus setup rejection must not latch emergency");
@@ -1160,6 +1429,28 @@ namespace MovementPrototype {
                 results.AddRange(PacingIntegrationTests());
                 results.AddRange(RunButtonMatch.Tests());
                 results.AddRange(VisualSceneGate.Tests());
+                Check(EncounterRecognition.RareEncounterNotice("You have encountered a rare form!") &&
+                    EncounterRecognition.RareEncounterNotice("Notice\nYou\u2019ve encountered a rare\nform!\nOK") &&
+                    EncounterRecognition.RareEncounterNotice("You got a rare encounter!"),
+                    "Personal rare-form modal variants and line wraps");
+                Check(!EncounterRecognition.RareEncounterNotice("A player encountered a rare form!") &&
+                    !EncounterRecognition.RareEncounterNotice("Trainer: You have encountered a rare form!") &&
+                    !EncounterRecognition.RareEncounterNotice("You have encountered a rare form guide") &&
+                    !EncounterRecognition.RareEncounterNotice("VS. Wild Mimikyu"),
+                    "Global notices, chat text, unrelated text and species do not trigger rare protection");
+                results.Add("PASS: rare-form protection matches personal notices independently of species and rejects public announcements");
+                var battleTime=new DateTime(2026,11,19,15,55,8);
+                var chat="[15:55:05] Infamouro encountered a shiny Gastly.\n[15:55:08] Advay0 encountered a Halloween Seedot.";
+                Check(EncounterRecognition.RareEncounterAnnouncement("AdvayO VS. Wild Seedot",chat,"seedot",battleTime,battleTime.AddSeconds(2))!=null,
+                    "Own same-species fresh form announcement from the reported screen");
+                Check(EncounterRecognition.RareEncounterAnnouncement("Other VS. Wild Seedot",chat,"seedot",battleTime,battleTime.AddSeconds(2))==null &&
+                    EncounterRecognition.RareEncounterAnnouncement("Advay0 VS. Wild Gastly",chat,"gastly",battleTime,battleTime.AddSeconds(2))==null &&
+                    EncounterRecognition.RareEncounterAnnouncement("Advay0 VS. Wild Seedot",chat,"seedot",battleTime.AddSeconds(12),battleTime.AddSeconds(13))==null &&
+                    EncounterRecognition.RareEncounterAnnouncement("Advay0 VS. Wild Seedot","[15:55:08] Advay0: encountered a Halloween Seedot.","seedot",battleTime,battleTime.AddSeconds(2))==null,
+                    "Other players, different species, stale messages and player chat must not count");
+                results.Add("PASS: fresh personal Halloween Seedot announcement protects a matching battle; other species, senders and stale chat are ignored");
+                results.Add(App.RareCatchRoutingTest());
+                results.Add(App.CheckedEscapeTest());
                 results.AddRange(ReadyEscapePolicy.Tests());
                 results.AddRange(DualScheduler.Tests());
                 results.AddRange(CatchTests.Run());
@@ -1210,6 +1501,7 @@ namespace MovementPrototype {
         }
         public static int OcrTest(string path) {
             try {
+                long noticeReadMs=0;
                 using(var frame=new Bitmap(640,480))using(var g=Graphics.FromImage(frame))using(var titleFont=new Font("Segoe UI",10,FontStyle.Bold))using(var bodyFont=new Font("Segoe UI",8))using(var buttonFont=new Font("Segoe UI",8,FontStyle.Bold))using(var titleBrush=new SolidBrush(Color.FromArgb(78,74,82)))using(var bodyBrush=new SolidBrush(Color.FromArgb(40,35,50))) {
                     g.Clear(Color.FromArgb(32,78,45));g.FillRectangle(titleBrush,180,170,267,27);g.FillRectangle(bodyBrush,180,197,267,88);
                     g.FillRectangle(Brushes.Red,294,285,74,24);g.FillRectangle(Brushes.LimeGreen,368,285,74,24);
@@ -1228,6 +1520,32 @@ namespace MovementPrototype {
                     var snapshot=LocalOcr.ReadBattle(frame,chrome.Header,true).GetAwaiter().GetResult();
                     var read=EncounterRecognition.Parse("[Encounter header]\n"+snapshot.Header+"\n[Battle controls]\n"+snapshot.Controls+"\n[Full screen]\n");
                     Check(read.Name=="seedot" && snapshot.ClientPoint.HasValue,"detected thin header and direct Run OCR preserve identity");
+                }
+                using(var frame=new Bitmap(1080,680))using(var g=Graphics.FromImage(frame))using(var font=new Font("Segoe UI",12,FontStyle.Bold)) {
+                    g.Clear(Color.FromArgb(38,63,50));
+                    g.FillRectangle(Brushes.DimGray,310,248,460,98);
+                    g.DrawString("You've encountered a rare form!",font,Brushes.White,362,275);
+                    g.DrawString("OK",font,Brushes.White,525,310);
+                    g.Flush();
+                    var timer=Stopwatch.StartNew();
+                    Check(LocalOcr.ReadRareEncounterNotice(frame).GetAwaiter().GetResult(),"OCR detects the personal rare-form popup");
+                    noticeReadMs=timer.ElapsedMilliseconds;
+                    g.Clear(Color.FromArgb(38,63,50));
+                    g.DrawString("A player encountered a rare form!",font,Brushes.White,615,494);
+                    g.DrawString("You have encountered a rare form!",font,Brushes.White,615,608);
+                    g.Flush();
+                    Check(!LocalOcr.ReadRareEncounterNotice(frame).GetAwaiter().GetResult(),"OCR ignores unrelated notices and chat below the viewport");
+                }
+                using(var frame=new Bitmap(1080,680))using(var g=Graphics.FromImage(frame))using(var font=new Font("Segoe UI",10,FontStyle.Bold)) {
+                    var area=LocalOcr.EncounterFeedArea(frame.Size);
+                    g.Clear(Color.FromArgb(24,24,30));
+                    g.DrawString("[15:55:08]",font,Brushes.White,area.Left+4,area.Top+34);
+                    g.DrawString("Advay0 encountered a Halloween Seedot.",font,Brushes.Yellow,area.Left+6+g.MeasureString("[15:55:08]",font).Width,area.Top+34);
+                    g.Flush();
+                    var feed=LocalOcr.ReadRareEncounterFeed(frame,area).GetAwaiter().GetResult();
+                    var now=new DateTime(2026,11,19,15,55,9);
+                    Check(EncounterRecognition.RareEncounterAnnouncement("Advay0 VS. Wild Seedot",feed,"seedot",now.AddSeconds(-1),now)!=null,
+                        "OCR reads the timestamped Halloween Seedot announcement: "+feed);
                 }
                 using(var bitmap=new Bitmap(1100,260)) {
                     using(var g=Graphics.FromImage(bitmap)) using(var font=new Font("Segoe UI",26,FontStyle.Bold)) {
@@ -1258,7 +1576,7 @@ namespace MovementPrototype {
                         var quickWorld=EncounterRecognition.Parse(LocalOcr.ReadGame(game,false).GetAwaiter().GetResult());
                         Check(quickWorld.Overworld && !quickWorld.Battle,"fast two-region OCR confirms overworld");
                     }
-                    File.WriteAllText(path,"PASS: Windows OCR reads an exact Max Repel renewal and its Yes button; synthetic wild header and battle commands also pass.\n"+text+"\n"+CatchTests.Ocr()); return 0;
+                    File.WriteAllText(path,"PASS: Rare encounter popup OCR fixture in "+noticeReadMs+" ms; public notices and cropped chat ignored.\r\nPASS: OCR reads an exact Max Repel renewal and its Yes button; synthetic wild header and battle commands also pass.\n"+text+"\n"+CatchTests.Ocr()); return 0;
                 }
             } catch(Exception ex) { File.WriteAllText(path,"FAIL: "+ex); return 1; }
         }

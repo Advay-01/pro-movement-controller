@@ -2,6 +2,21 @@
 
 ## v2.1.6
 
+A fresh chat announcement matching the player and current wild opponent can trigger rare-form catching. The previous activity log is retained at rollover.
+
+Hold and Gap each accept minimum and maximum seconds. Each new interval is picked within its range, while equal endpoints keep fixed timing.
+
+
+Confirms ordinary encounter names and checks for the rare-form notice during battle dialogue. When the verified caption and Run controls match, escape can dispatch on the first ready frame.
+
+PRO's personal rare-encounter popup protects the encounter from fleeing and starts the saved catch recipe for any confirmed species after the popup clears. If the recipe is unavailable or the opponent cannot be confirmed, hunting stops for manual handling. Popup OCR runs with opponent recognition.
+
+Recognizes floating battle titles broken by player and opponent text, and locates Run when the command row is near the bottom of the panel. Escape checks the live caption and controls before sending input.
+
+Catching waits for a briefly unreadable catcher nameplate. It retains move and breakout acknowledgements across animation frames, and rechecks menus when pixels change before an input is sent. Windows OCR reads captured pixels directly, and catching reuses an unchanged, confirmed active nameplate.
+
+Tightens Repel prompt geometry so scenery with red and green stripes does not interrupt walking. The battle detector recognizes split title bars with a dark menu pane, and catching retains the panel geometry while the verified encounter caption remains visible. A live Mimikyu capture verified Soak, False Swipe, a ball retry, and movement resume.
+
 Recognizes the active catcher from the battle caption when a fainted lead leaves the catcher already on the field. Ignores overlay numbers outside the move list and checks the verified battle panel for the result after a throw.
 
 The in-battle ball path reads the target and exact ball entry without waiting on unrelated OCR or repeating the stock read. The configured throw limit and battle acknowledgement still apply.

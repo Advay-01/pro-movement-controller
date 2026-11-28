@@ -13,7 +13,7 @@ namespace MovementPrototype {
         readonly VisualSceneGate catchWorld=new VisualSceneGate();
         CatchConfig catchConfig=new CatchConfig();
         string catchSettingsPath;
-        bool catchDialogOpen,catchPreviewPending,catchBusy,catchInputPending;
+        bool catchDialogOpen,catchPreviewPending,catchBusy,catchInputPending,catchStartedFromRareNotice;
         double nextCatchScan;
         long catchFrameId;
         int slowCatchReads;
@@ -21,7 +21,9 @@ namespace MovementPrototype {
         string lastCatchMessage="";
         Rectangle catchResultArea;
         Rectangle catchIdentityArea;
-        string catchIdentityPixels;
+        string catchIdentityPixels,catchOwnPixels;
+        Rectangle catchOwnArea;
+        ChromeReading catchBattleChrome;
         string TargetKey() {
             var names=new List<string>(EncounterRecognition.Targets(targetNames.Text));names.Sort(StringComparer.Ordinal);
             return String.Join(", ",names);
@@ -30,6 +32,7 @@ namespace MovementPrototype {
             catchSettingsPath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,managedMode ? "catch-settings-"+statsName.Replace("visual-stats-","") : "catch-settings.json");
             try {catchConfig=CatchSettingsFile.Load(catchSettingsPath);}catch(Exception ex) {Activity("CATCH: settings not loaded: "+ex.Message);}
             flow.Controls.Add(autoCatch);flow.Controls.Add(Row(catchSettings,checkCatch));
+            flow.Controls.Add(new Label {Text="Rare-form notices use the saved catch recipe for any confirmed species.",AutoSize=true,MaximumSize=new Size(570,0)});
             catchSettings.Click+=delegate {Guard(delegate {
                 if(controller.Running || scanning || managedArmed)return;
                 string key=TargetKey();catchDialogOpen=true;
@@ -54,14 +57,50 @@ namespace MovementPrototype {
             catchConfig.Validate();
             if(catchConfig.ProtectedTargets!=TargetKey())throw new InvalidOperationException("Protected targets changed. Review and save Catch settings for these targets before enabling Auto-catch.");
         }
-        void BeginCatch(string species,Rectangle? headingArea,string headerSignature) {
-            ValidateCatch();ReleaseEscape();controller.Pause(true,clock.Elapsed.TotalSeconds);ResetControls();
-            catchFlow.Start(catchConfig,species,stableCount,clock.Elapsed.TotalSeconds);catchWorld.Reset();catchBusy=false;nextCatchScan=0;slowCatchReads=0;
-            lastCatchMessage="";catchResultArea=Rectangle.Empty;
-            catchIdentityArea=headingArea ?? Rectangle.Empty;catchIdentityPixels=headerSignature;
-            Activity("CATCH: started for "+species+"; bounded recipe; ball limit="+catchConfig.MaximumBalls);
+        void BeginCatch(string species,Rectangle? headingArea,string headerSignature,bool rare=false) {
+            if(rare) {
+                try {catchConfig.Validate();}
+                catch(ArgumentException ex) {StopForRareEncounter(ex.Message);return;}
+            } else ValidateCatch();
+            ReleaseEscape();controller.Pause(true,clock.Elapsed.TotalSeconds);ResetControls();
+            catchStartedFromRareNotice=rare;
+            catchFlow.Start(catchConfig,species,rare ? 1 : stableCount,clock.Elapsed.TotalSeconds,rare);catchWorld.Reset();catchBusy=false;nextCatchScan=0;slowCatchReads=0;
+            lastCatchMessage="";lastCatchView="";catchResultArea=catchOwnArea=Rectangle.Empty;catchOwnPixels=null;
+            catchIdentityArea=headingArea ?? Rectangle.Empty;catchIdentityPixels=headerSignature;catchBattleChrome=null;
+            Activity("CATCH: started for "+species+(rare ? " (rare form)" : "")+"; bounded recipe; ball limit="+catchConfig.MaximumBalls);
             encounterStatus.Text=catchFlow.Status;
-            NotifyCatch("Target found",species+" — configured catch sequence starting.");
+            NotifyCatch(rare ? "Rare form found" : "Target found",species+" — configured catch sequence starting.");
+        }
+        internal static string RareCatchRoutingTest() {
+            using(var app=new App()) {
+                app.timer.Stop();
+                app.alerts.Checked=false;
+                app.autoCatch.Checked=false;
+                app.desiredNames=EncounterRecognition.Targets("Mimikyu");
+                app.catchConfig=new CatchConfig {Catcher="Smeargle",VerifiedRecipe=true,ProtectedTargets="mimikyu"};
+                app.controller.Start(new Settings {UntilStopped=true},0);
+                var seedot=new EncounterReading {Battle=true,Name="seedot"};
+                app.ApplyReading(seedot);app.ApplyReading(seedot);
+                if(app.catchFlow.Active)throw new Exception("Ordinary non-targets must not use the rare catch recipe");
+                app.ProtectRareEncounter();
+                var area=new Rectangle(30,30,150,30);
+                app.ApplyReading(seedot,capturedAt:app.clock.Elapsed.TotalSeconds,headingArea:area,headerSignature:"fixture caption",rareNoticeVisible:true);
+                if(app.catchFlow.Active || !app.controller.Paused)throw new Exception("Visible rare prompt must block encounter input");
+                app.ApplyReading(new EncounterReading {Battle=true,Ambiguous=true});
+                if(app.catchFlow.Active || app.escapeHeld)throw new Exception("Ambiguous identity must not start catching or escape");
+                app.ApplyReading(seedot,capturedAt:app.clock.Elapsed.TotalSeconds,headingArea:area,headerSignature:"fixture caption");
+                if(!app.catchFlow.Active || app.catchFlow.Species!="seedot" || app.escapeHeld)
+                    throw new Exception("A rare non-target must enter the saved catch flow without escaping");
+                app.StopAll("Test reset");
+                app.catchFlow.Reset();app.rareCatchPending=false;
+                app.catchConfig.VerifiedRecipe=false;
+                app.controller.Start(new Settings {UntilStopped=true},app.clock.Elapsed.TotalSeconds);
+                app.ProtectRareEncounter();
+                app.ApplyReading(seedot,capturedAt:app.clock.Elapsed.TotalSeconds,headingArea:area,headerSignature:"fixture caption");
+                if(app.controller.Running || app.catchFlow.Active || app.escapeHeld)
+                    throw new Exception("An unverified recipe must leave a rare encounter for manual handling");
+            }
+            return "PASS: rare notice blocks escape, catches non-targets after one exact opponent read with a saved recipe; unverified recipes stop";
         }
         void NotifyCatch(string title,string message) {
             if(!alerts.Checked)return;
@@ -73,21 +112,39 @@ namespace MovementPrototype {
             using(var image=Native.CaptureClient(output.Target)) {
                 var chrome=visual.Detect(image);
                 Rectangle? caption=null;
-                if(catchFlow.Active && chrome.Kind==ChromeKind.Battle && catchIdentityPixels!=null && !catchIdentityArea.IsEmpty &&
-                    chrome.Header.Contains(catchIdentityArea) &&
-                    VerifiedHeader.Signature(image,catchIdentityArea)==catchIdentityPixels)
-                    caption=catchIdentityArea;
+                if(catchFlow.Active && catchIdentityPixels!=null && !catchIdentityArea.IsEmpty &&
+                    new Rectangle(Point.Empty,image.Size).Contains(catchIdentityArea) &&
+                    VerifiedHeader.Signature(image,catchIdentityArea)==catchIdentityPixels) {
+                    if(chrome.Kind==ChromeKind.Battle && chrome.Header.Contains(catchIdentityArea))caption=catchIdentityArea;
+                    else if(catchBattleChrome!=null && new Rectangle(Point.Empty,image.Size).Contains(catchBattleChrome.Header)) {
+                        chrome=catchBattleChrome;
+                        caption=catchIdentityArea;
+                    }
+                }
                 var resultArea=BattleRegions.BottomLog(chrome,image.Size);
                 var throwArea=catchResultArea;
                 var resultRead=catchFlow.Phase==CatchPhase.WaitBall && chrome.Kind!=ChromeKind.Clear &&
                     !throwArea.IsEmpty && resultArea!=throwArea
                     ? LocalOcr.ReadCatchRegion(image,throwArea) : null;
-                var frame=await LocalOcr.ReadCatch(image,chrome,catchConfig,species,move,slot,++catchFrameId,at,
+                Rectangle? own=null;
+                if(caption.HasValue && catchOwnPixels!=null &&
+                    BattleRegions.Own(chrome,image.Size).Contains(catchOwnArea) &&
+                    VerifiedHeader.Signature(image,catchOwnArea)==catchOwnPixels)own=catchOwnArea;
+                var notice=!catchStartedFromRareNotice && catchFlow.Phase==CatchPhase.SelectCatcher ? LocalOcr.ReadRareEncounterNotice(image) : null;
+                var read=LocalOcr.ReadCatch(image,chrome,catchConfig,species,move,slot,++catchFrameId,at,
                     catchFlow.Phase==CatchPhase.SelectCatcher || !String.IsNullOrWhiteSpace(catchConfig.ExpectedLead),
-                    catchFlow.Phase==CatchPhase.SelectBall,caption);
+                    catchFlow.Phase==CatchPhase.SelectBall,caption,own,catchFlow.Phase==CatchPhase.WaitBall);
+                if(notice!=null)await System.Threading.Tasks.Task.WhenAll(read,notice);
+                var frame=await read;
+                frame.RareEncounter=notice!=null && notice.Result;
+                if(frame.Wild && frame.Opponent==species && frame.ActivePokemon==catchConfig.Catcher && !frame.OwnSeal.IsEmpty && frame.OwnSeal!=BattleRegions.Own(chrome,image.Size)) {
+                    catchOwnArea=frame.OwnSeal;
+                    catchOwnPixels=VerifiedHeader.Signature(image,catchOwnArea);
+                }
                 if(frame.Wild && String.Equals(frame.Opponent,species,StringComparison.OrdinalIgnoreCase) && !frame.HeaderSeal.IsEmpty) {
                     catchIdentityArea=frame.HeaderSeal;
                     catchIdentityPixels=VerifiedHeader.Signature(image,catchIdentityArea);
+                    if(chrome.Kind==ChromeKind.Battle)catchBattleChrome=chrome;
                 }
                 frame.ResultArea=resultArea;
                 if(resultRead!=null) {
@@ -119,6 +176,12 @@ namespace MovementPrototype {
                     log.Items.Insert(0,encounterStatus.Text);return;
                 }
                 if(!CatchContext(run,epoch))return;
+                if(frame.RareEncounter) {
+                    ProtectRareEncounter();
+                    catchFlow.WaitForNotice(clock.Elapsed.TotalSeconds);
+                    encounterStatus.Text="Rare form detected — waiting for the notice to close.";
+                    return;
+                }
                 if(clock.Elapsed.TotalSeconds-frame.CapturedAt>CatchFlow.MaximumFrameAge) {
                     Activity("CATCH: discarded slow read; ms="+Math.Round((clock.Elapsed.TotalSeconds-frame.CapturedAt)*1000)+"; retry="+(slowCatchReads+1));
                     if(++slowCatchReads>=3)StopCatch("Stopped — three catch reads were too slow; no stale input sent");
@@ -126,7 +189,7 @@ namespace MovementPrototype {
                 }
                 slowCatchReads=0;
                 catchBusy=frame.View==CatchView.Busy;
-                string view=frame.View+"; own="+frame.ActivePokemon+"; ready="+frame.Ready+"; ownArea="+frame.OwnSeal;if(view!=lastCatchView) {Activity("CATCH SCREEN: "+view);if(frame.View==CatchView.Moves)Activity("CATCH MOVE READ: "+frame.ReadDetail.Replace('\n',' '));lastCatchView=view;}
+                string view=frame.View+"; own="+frame.ActivePokemon+"; ready="+frame.Ready+"; ownArea="+frame.OwnSeal;if(view!=lastCatchView) {Activity("CATCH SCREEN: "+view);if(frame.View==CatchView.Moves || frame.View==CatchView.Unknown)Activity("CATCH VIEW READ: "+frame.ReadDetail.Replace('\n',' '));lastCatchView=view;}
                 if(frame.View==CatchView.BallList && catchFlow.Phase==CatchPhase.SelectBall) {
                     var ball=frame.Control(CatchActionKind.UseBall);
                     if(ball==null || ball.Remaining<0)Activity("CATCH STOCK READ: "+frame.ReadDetail);
@@ -144,20 +207,24 @@ namespace MovementPrototype {
                 bool pixelCheck=action.Kind==CatchActionKind.ChooseMove || action.Kind==CatchActionKind.UseBall || action.Kind==CatchActionKind.OpenFight || action.Kind==CatchActionKind.OpenBag;
                 var fresh=pixelCheck ? frame : await CatchSnapshot(species,move,slot);
                 if(!CatchContext(run,epoch))return;
-                if(!pixelCheck && !CatchVision.Reconfirms(action,frame,fresh)) {
-                    if(catchFlow.RetryUnsentNavigation(action))return;
+                if(fresh.RareEncounter) {
+                    ProtectRareEncounter();
+                    catchFlow.WaitForNotice(clock.Elapsed.TotalSeconds);
+                }
+                if(!pixelCheck && (fresh.RareEncounter || !CatchVision.Reconfirms(action,frame,fresh))) {
+                    if(catchFlow.RetryUnsentAction(action))return;
                     StopCatch("Stopped — catching menu changed or could not be reconfirmed; check target manually");return;
                 }
                 action.FrameId=fresh.Id;action.Point=fresh.Control(action.Kind).Point;
                 if(!catchFlow.Allows(action,fresh,clock.Elapsed.TotalSeconds,true)) {StopCatch("Stopped — catching screen was stale; no further input");return;}
                 using(var current=Native.CaptureClient(output.Target)) {
                     string seal;if(!fresh.InputSeals.TryGetValue(action.Kind,out seal) || seal!=CatchVision.InputSeal(current,fresh,action.Kind)) {
-                        if(catchFlow.RetryUnsentNavigation(action))return;
+                        if(catchFlow.RetryUnsentAction(action))return;
                         StopCatch("Stopped — target, catcher or control pixels changed before input");return;
                     }
                 }
                 Native.ClickClient(output.Target,output.Process,action.Point);
-                catchFlow.NavigationSent();
+                catchFlow.ActionSent();
                 if(action.Kind==CatchActionKind.UseBall)catchResultArea=fresh.ResultArea;
                 Activity("CATCH ACTION: "+action.Kind+"; "+action.Label+"; balls requested="+catchFlow.BallsUsed+"; screen-to-input="+Math.Round((clock.Elapsed.TotalSeconds-fresh.CapturedAt)*1000)+"ms");
             }catch(Exception ex) {
@@ -170,7 +237,7 @@ namespace MovementPrototype {
         void FinishCatch() {
             string species=catchFlow.Species;bool resume=catchFlow.Resume;
             Activity("CATCH: confirmed capture of "+species+"; balls requested="+catchFlow.BallsUsed+"; resume="+resume);
-            catchFlow.Reset();generation++;stableName="";stableCount=0;ResetControls();repelPolicy.Reset();
+            catchFlow.Reset();rareCatchPending=false;generation++;stableName="";stableCount=0;ResetControls();repelPolicy.Reset();
             scene.Reset();visualDecision=VisualDecision.ValidateWorld;lastChrome=ChromeKind.Transition;nextProbe=nextScan=0;
             if(!resume)StopAll("Caught "+species+" — stopped as configured");
             else {controller.Pause(true,clock.Elapsed.TotalSeconds);encounterStatus.Text="Caught "+species+" — checking clear world before hunting again.";}

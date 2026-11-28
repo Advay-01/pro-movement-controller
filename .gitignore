@@ -14,3 +14,5 @@ activity.log
 .vscode/
 .idea/
 catch-settings*.json
+
+/linux/build/

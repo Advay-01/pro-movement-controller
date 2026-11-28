@@ -204,7 +204,14 @@ namespace MovementPrototype {
         void ResetAll() {foreach(var hunt in hunts)hunt.ResetManaged();latched=false;status.Text="Ready — both stopped";RefreshControls();}
         void Guard(Action action) {try {action();}catch(Exception ex) {try {Stop(true,"Stopped — shared controller error");}catch {}status.Text=ex.Message;Log("ERROR: "+ex.Message);}RefreshControls();}
         void Step() {
-            if(closing)return;double now=clock.Elapsed.TotalSeconds;
+            if(closing)return;
+#if LINUX
+            if(hotkeys)foreach(int id in Native.PollHotKeys(Handle)) {
+                if(id==1)Toggle(true);
+                if(id==2)Stop(true,"EMERGENCY STOP — both stopped");
+            }
+#endif
+            double now=clock.Elapsed.TotalSeconds;
             if(!hotkeys && now>=nextHotkeys) {nextHotkeys=now+1;Register();}
             if(pending) {status.Text="Starting in "+Math.Max(0,Math.Ceiling(startAt-now))+" seconds";if(now>=startAt)Start();}
             if(scheduler.Running) {scheduler.Step(now);status.Text=scheduler.Status;}

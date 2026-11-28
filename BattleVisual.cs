@@ -30,6 +30,11 @@ namespace MovementPrototype {
             int i=y*stride+x*4,b=pixels[i],g=pixels[i+1],r=pixels[i+2];int maximum=Math.Max(r,Math.Max(g,b)),minimum=Math.Min(r,Math.Min(g,b));
             return maximum>=36 && maximum<=105 && maximum-minimum<=15;
         }
+        bool SameTitleShade(int x,int y,int sample) {
+            int i=y*stride+x*4;
+            return HeaderGray(x,y) && Math.Abs(pixels[i]-pixels[sample])<=8 &&
+                Math.Abs(pixels[i+1]-pixels[sample+1])<=8 && Math.Abs(pixels[i+2]-pixels[sample+2])<=8;
+        }
         bool HudGray(int x,int y) {
             int i=y*stride+x*4,b=pixels[i],g=pixels[i+1],r=pixels[i+2];int maximum=Math.Max(r,Math.Max(g,b)),minimum=Math.Min(r,Math.Min(g,b));
             return maximum>=18 && maximum<=105 && maximum-minimum<=32;
@@ -51,24 +56,53 @@ namespace MovementPrototype {
         ChromeReading FloatingPanel() {
             int step=Math.Max(2,height/180),band=Math.Max(6,height/45);
             for(int y=Math.Max(3,height/60);y<(int)(height*.72);y+=step) {
-                int run=0,longest=0;
-                for(int gx=0;gx<width;gx+=3) {run=HeaderGray(gx,y) ? run+3 : 0;longest=Math.Max(longest,run);}
-                if(longest<width*.44)continue;
+                int run=0,longest=0,grayLength=0;
+                for(int gx=0;gx<width;gx+=3) {
+                    if(HeaderGray(gx,y)) {run+=3;grayLength+=3;}else run=0;
+                    longest=Math.Max(longest,run);
+                }
+                bool splitTitle=longest<width*.44;
+                if(grayLength<width*.38)continue;
                 for(int x=(int)(width*.15);x<(int)(width*.78);x+=3) {
                     int count=0,sum=0;
                     for(int yy=Math.Max(0,y-band);yy<Math.Min(height,y+band);yy+=2)for(int xx=x;xx<Math.Min(width,x+24);xx+=2)if(Gold(xx,yy)) {count++;sum+=xx;}
                     if(count<Math.Max(8,width/100) || !HeaderGray(sum/count,y))continue;
                     int center=sum/count,left=center,right=center,miss=0;
-                    for(int xx=center;xx>=0;xx--) {miss=HeaderGray(xx,y) ? 0 : miss+1;if(miss>=4) {left=xx+4;break;}left=xx;}
-                    miss=0;for(int xx=center;xx<width;xx++) {miss=HeaderGray(xx,y) ? 0 : miss+1;if(miss>=4) {right=xx-3;break;}right=xx+1;}
+                    // The title can contain several groups of colored or bright
+                    // letters. Join text-sized interruptions, then validate the pane.
+                    int gap=Math.Max(5,width/36),shade=y*stride+center*4;
+                    for(int xx=center;xx>=0;xx--) {
+                        if(SameTitleShade(xx,y,shade)) {left=xx;miss=0;}
+                        else if(++miss>=gap)break;
+                    }
+                    miss=0;
+                    for(int xx=center;xx<width;xx++) {
+                        if(SameTitleShade(xx,y,shade)) {right=xx+1;miss=0;}
+                        else if(++miss>=gap)break;
+                    }
                     int panelWidth=right-left;
-                    if(panelWidth<width*.45 || panelWidth>width*.92)continue;
+                    // At narrow client sizes PRO clips the battle panel to both
+                    // window edges. The pane check below still applies.
+                    bool edgeToEdge=left<=width*.035 && right>=width*.965;
+                    bool clippedCompactTitle=width<=800 && left<=width*.10 && right>=width*.975;
+                    if(panelWidth<width*.45 || panelWidth>width*.92 && !edgeToEdge)continue;
                     int edge=right-Math.Max(6,panelWidth/70),top=y,bottom=y;
-                    while(top>0 && HeaderGray(edge,top-1))top--;
-                    while(bottom<height-1 && HeaderGray(edge,bottom+1))bottom++;
+                    while(top>0 && SameTitleShade(edge,top-1,shade))top--;
+                    while(bottom<height-1 && SameTitleShade(edge,bottom+1,shade))bottom++;
                     if(bottom-top<height*.015 || bottom-top>height*.09)continue;
+                    if(splitTitle || longest<panelWidth*.85 || panelWidth>width*.75) {
+                        // The right-hand pane stays dark gray even when a
+                        // submenu fills it.
+                        int pane=0,points=0;
+                        for(int row=bottom+8;row<Math.Min(height,bottom+(int)(panelWidth*.27));row+=Math.Max(4,height/60))
+                            for(int column=left+(int)(panelWidth*.79);column<left+(int)(panelWidth*.96);column+=Math.Max(4,width/65)) {
+                                points++;if(GrayDark(column,row))pane++;
+                            }
+                        if(points==0 || pane*4<points*3)continue;
+                    }
                     // Opening a submenu replaces the black log. Keep reading the
                     // battle caption; exact wild identity still authorizes actions.
+                    if(clippedCompactTitle) {left=0;panelWidth=right;}
                     int captionHeight=Math.Max(bottom-top+5,Math.Max(32,(int)(height*.055)));
                     var box=new Rectangle(left,top,panelWidth,Math.Min(height-top,captionHeight+(int)(panelWidth*.53)));
                     return new ChromeReading {Kind=ChromeKind.Battle,GoldX=center,BattleBox=box,Header=new Rectangle(left,Math.Max(0,top-2),panelWidth,Math.Min(height-top,Math.Max(captionHeight,(int)(height*.09))))};
@@ -276,6 +310,31 @@ namespace MovementPrototype {
                 if(floating.Kind!=ChromeKind.Battle || !floating.BattleBox.HasValue || floating.BattleBox.Value.Right>535)throw new Exception("Inset battle panel must override visible party/world HUD: "+floating.Kind+"; "+floating.BattleBox);
                 g.FillRectangle(Brushes.White,415,82,110,145);
                 if(detector.Detect(image).Kind==ChromeKind.Clear)throw new Exception("Inset battle header with an uncertain menu must never authorize walking");
+                // Reproduce a floating title broken into short gray spans by
+                // player/species text, with the overworld HUD still visible.
+                g.Clear(Color.FromArgb(32,78,45));DrawHud(g);
+                using(var fill=new SolidBrush(Color.FromArgb(55,55,59)))g.FillRectangle(fill,85,60,440,22);
+                g.FillRectangle(Brushes.Black,420,82,105,145);
+                foreach(int x in new int[] {165,225,278,325,380})g.FillRectangle(Brushes.White,x,60,11,22);
+                g.DrawString("VS.",font,Brushes.Gold,248,61);
+                if(detector.Detect(image).Kind!=ChromeKind.Battle)throw new Exception("Text-sized gaps in a floating title must not hide a battle");
+                using(var map=new SolidBrush(Color.FromArgb(32,78,45)))g.FillRectangle(map,420,82,105,145);
+                if(detector.Detect(image).Kind!=ChromeKind.Clear)throw new Exception("A fragmented title without a dark battle pane must not interrupt movement");
+                g.Clear(Color.FromArgb(41,40,43));DrawHud(g);
+                using(var fill=new SolidBrush(Color.FromArgb(63,60,65)))g.FillRectangle(fill,85,60,440,22);
+                g.FillRectangle(Brushes.Black,420,82,105,145);
+                g.DrawString("VS.",font,Brushes.Gold,235,61);
+                floating=detector.Detect(image);
+                if(!floating.BattleBox.HasValue || floating.BattleBox.Value.Left<80 || floating.BattleBox.Value.Right>530)
+                    throw new Exception("A dim gray map must not expand the floating title beyond its title-bar shade");
+                g.Clear(Color.FromArgb(38,65,52));DrawHud(g);
+                using(var fill=new SolidBrush(Color.FromArgb(58,53,60)))g.FillRectangle(fill,0,44,640,23);
+                g.FillRectangle(Brushes.Black,480,67,160,142);
+                g.DrawString("VS.",font,Brushes.Gold,205,46);
+                floating=detector.Detect(image);
+                if(!floating.BattleBox.HasValue || floating.BattleBox.Value.Width<630 ||
+                    !BattleRegions.Own(floating,image.Size).Contains(new Point(345,302)))
+                    throw new Exception("A full-width battle in a narrow client must preserve the panel-relative catcher region");
                 g.Clear(Color.FromArgb(15,15,16));DrawHud(g);g.DrawString("VS.",font,Brushes.Gold,205,5);
                 using(var fill=new SolidBrush(Color.FromArgb(55,55,59)))g.FillRectangle(fill,85,60,440,22);
                 g.FillRectangle(Brushes.Black,415,82,110,145);g.DrawString("VS.",font,Brushes.Gold,235,61);g.Flush();

@@ -25,6 +25,20 @@ namespace MovementPrototype {
             int hi=Math.Max(c.R,Math.Max(c.G,c.B)),lo=Math.Min(c.R,Math.Min(c.G,c.B));
             return lo>=40 && hi<=155 && hi-lo<40;
         }
+        bool Red(int x,int y) {
+            var color=Pixel(x,y);
+            return color.R>65 && color.R>color.G*1.6 && color.R>color.B*1.5;
+        }
+        bool SolidDialog(int left,int right,int headerY,int bodyY) {
+            int gray=0,dark=0;
+            for(int column=0;column<11;column++) {
+                int x=left+(right-left)*column/10;
+                if(Gray(Pixel(x,headerY)))gray++;
+                var body=Pixel(x,bodyY);
+                if(Math.Max(body.R,Math.Max(body.G,body.B))<=95)dark++;
+            }
+            return gray>=9 && dark>=9;
+        }
         public Rectangle? Find(Bitmap image) {
             width=image.Width;height=image.Height;stride=width*4;
             if(width<100 || height<90)return null;
@@ -32,7 +46,9 @@ namespace MovementPrototype {
             var bits=image.LockBits(new Rectangle(0,0,width,height),ImageLockMode.ReadOnly,PixelFormat.Format32bppArgb);
             try {for(int y=0;y<height;y++)Marshal.Copy(IntPtr.Add(bits.Scan0,y*bits.Stride),pixels,y*stride,stride);}
             finally {image.UnlockBits(bits);}
-            for(int y=height/8;y<height*.96;y+=2)for(int x=0;x<width;) {
+            // Renewal opens in the center of the client. Skip the HUD and the
+            // map edges before comparing the dialog and both button interiors.
+            for(int y=(int)(height*.34);y<height*.80;y+=2)for(int x=(int)(width*.42);x<width*.84;) {
                 if(!Green(x,y)) {x++;continue;}
                 int left=x;while(x<width && Green(x,y))x++;
                 int span=x-left;
@@ -40,19 +56,22 @@ namespace MovementPrototype {
                 int headerY=y-(int)(span*1.40),bodyY=y-(int)(span*.65);
                 int modalLeft=x-(int)(span*3.55),modalTop=y-(int)(span*1.65);
                 if(headerY<0 || bodyY<0 || modalLeft<-8 || modalTop<-8)continue;
-                int red=0;
-                foreach(double f in new double[] {.2,.5,.8}) {
-                    int rx=left-(int)(span*f);
-                    if(rx<0)continue;
-                    var c=Pixel(rx,y);
-                    if(c.R>65 && c.R>c.G*1.6 && c.R>c.B*1.5)red++;
-                }
-                if(red<3)continue;
+                double centerX=(modalLeft+x)*.5,centerY=(modalTop+y+span*.43)*.5;
+                if(Math.Abs(centerX-width*.5)>width*.13 || Math.Abs(centerY-height*.5)>height*.16)continue;
+                int buttonBottom=y+Math.Max(3,(int)(span*.10));
+                if(buttonBottom>=height || left-(int)(span*.8)<0)continue;
+                if(!Red(left-span/5,y) || !Red(left-span/2,y) || !Red(left-span*4/5,y) ||
+                    !Red(left-span*7/8,buttonBottom) || !Green(left+span/8,buttonBottom) ||
+                    !Green(left+span*7/8,buttonBottom))continue;
                 int lx=Math.Max(0,modalLeft+(int)(span*.12)),rx2=Math.Min(width-1,x-(int)(span*.12));
                 var a=Pixel(lx,headerY);var b=Pixel(rx2,headerY);
                 if(!Gray(a) || !Gray(b) || Math.Abs(a.R-b.R)+Math.Abs(a.G-b.G)+Math.Abs(a.B-b.B)>45)continue;
                 a=Pixel(lx,bodyY);b=Pixel(rx2,bodyY);
                 if(Math.Max(a.R,Math.Max(a.G,a.B))>95 || Math.Max(b.R,Math.Max(b.G,b.B))>95)continue;
+                int lineOffset=Math.Max(3,span/11);
+                if(!SolidDialog(lx,rx2,headerY,bodyY) &&
+                    (headerY<lineOffset || !SolidDialog(lx,rx2,headerY-lineOffset,bodyY+lineOffset)) &&
+                    !SolidDialog(lx,rx2,headerY+lineOffset,bodyY-lineOffset))continue;
                 var area=Rectangle.FromLTRB(Math.Max(0,modalLeft-3),Math.Max(0,modalTop-3),Math.Min(width,x+4),Math.Min(height,y+(int)(span*.43)+3));
                 if(area.Width>=80 && area.Height>=60)return area;
             }
@@ -103,6 +122,14 @@ namespace MovementPrototype {
                 if(VerifiedHeader.Signature(frame,identity)!=signature)throw new Exception("Animated scenery outside the opaque prompt must not invalidate identity");
                 frame.SetPixel(identity.Left+10,identity.Top+10,Color.White);
                 if(VerifiedHeader.Signature(frame,identity)==signature)throw new Exception("Changed prompt pixels must require another fresh read");
+                // A narrow red/green stripe with dark scenery above it was
+                // sufficient for the older, single-row detector.
+                g.Clear(Color.FromArgb(32,78,45));
+                using(var title=new SolidBrush(Color.FromArgb(78,74,82)))using(var body=new SolidBrush(Color.FromArgb(40,35,50))) {
+                    g.FillRectangle(title,190,170,215,25);g.FillRectangle(body,190,195,215,73);
+                    g.FillRectangle(Brushes.Red,286,268,60,2);g.FillRectangle(Brushes.LimeGreen,346,268,60,2);
+                }
+                g.Flush();if(detector.Find(frame).HasValue)throw new Exception("A red/green scenery stripe must not interrupt walking");
             }
             return new List<string> {"PASS: Repel renewal accepts only the exact expired/use-another prompt for Repel, Super Repel or Max Repel","PASS: purchases, releases, unrelated items, chat/extra text and ambiguous/misaligned buttons never authorize Repel clicks","PASS: cheap dialog geometry triggers a cropped read; ordinary world colors trigger no prompt OCR"};
         }

@@ -15,13 +15,35 @@ namespace MovementPrototype {
         public string Text="";public List<CatchTextRow> Rows=new List<CatchTextRow>();
     }
     public static class CatchVision {
-        public static void AddNavigation(CatchFrame frame,CatchTextRegion menu,Bitmap image) {
-            if(!frame.Wild)return;var fight=Unique(menu,"Fight");var items=Unique(menu,"Items");var run=Unique(menu,"Run");
-            if(fight==null || items==null || run==null)return;
-            var f=Center(fight.Bounds);var i=Center(items.Bounds);var r=Center(run.Bounds);
-            if(Math.Abs(f.X-i.X)>image.Width*.035 || r.X-i.X<image.Width*.025 || Math.Abs(r.Y-i.Y)>image.Height*.025)return;
-            frame.Ready=BattleControlReady.Read(image,r,i)==ControlReady.Ready;
-            if(frame.Ready) {Put(frame,CatchActionKind.OpenFight,Control(fight,"Fight"));Put(frame,CatchActionKind.OpenBag,Control(items,"Items"));}
+        public static void AddNavigation(CatchFrame frame,CatchTextRegion menu,Bitmap image,Rectangle menuArea) {
+            if(!frame.Wild || frame.Success || frame.Failure)return;
+            var fight=Unique(menu,"Fight");var items=Unique(menu,"Items");
+            var run=Unique(menu,"Run");
+            if(image.Width<=800) {
+                items=items ?? Unique(menu,"Ite s") ?? Unique(menu,"tems") ?? Unique(menu,"Ite");
+                run=run ?? Unique(menu,"R bn");
+            }
+            if(fight==null || items==null)return;
+            var f=Center(fight.Bounds);var i=Center(items.Bounds);
+            Point r;
+            if(run!=null)r=Center(run.Bounds);
+            else {
+                Point? inferred,anchor;
+                if(!RunButtonMatch.FindControls(menu,menuArea,out inferred,out anchor))return;
+                r=inferred.Value;
+            }
+            if(Math.Abs(f.X-i.X)>image.Width*.035 || i.Y-f.Y<image.Height*.025 ||
+                r.X-i.X<image.Width*.025 || Math.Abs(r.Y-i.Y)>image.Height*.025)return;
+            var state=BattleControlReady.Read(image,r,i);
+            frame.Ready=state==ControlReady.Ready;
+            if(frame.View==CatchView.Unknown) {
+                if(frame.Ready)frame.View=CatchView.Commands;
+                else if(state==ControlReady.Busy)frame.View=CatchView.Busy;
+            }
+            if(frame.Ready) {
+                Put(frame,CatchActionKind.OpenFight,Control(fight,"Fight"));
+                Put(frame,CatchActionKind.OpenBag,Control(items,"Items"));
+            }
         }
         public static string InputSeal(Bitmap image,CatchFrame frame,CatchActionKind kind) {
             var control=frame.Control(kind);if(control==null)return null;
@@ -76,8 +98,87 @@ namespace MovementPrototype {
         static void Put(CatchFrame frame,CatchActionKind kind,CatchControl control) {if(control!=null)frame.Controls[kind]=control;}
         static CatchTextRow Near(CatchTextRegion menu,CatchTextRow label,Func<string,bool> predicate) {
             var rows=menu.Rows.FindAll(r=>predicate(r.Text) && Math.Abs(r.Bounds.Top-label.Bounds.Top)<70 && Math.Abs(r.Bounds.Left-label.Bounds.Left)<180);
-            rows.Sort((a,b)=>(Math.Abs(a.Bounds.Top-label.Bounds.Top)+Math.Abs(a.Bounds.Left-label.Bounds.Left)).CompareTo(Math.Abs(b.Bounds.Top-label.Bounds.Top)+Math.Abs(b.Bounds.Left-label.Bounds.Left)));
-            return rows.Count>0 ? rows[0] : null;
+            return rows.OrderBy(r=>Math.Abs(r.Bounds.Top-label.Bounds.Top)+Math.Abs(r.Bounds.Left-label.Bounds.Left))
+                .ThenBy(r=>r.Bounds.Top<label.Bounds.Top).FirstOrDefault();
+        }
+        static CatchTextRow MoveCounter(CatchTextRegion menu,CatchTextRow name,CatchTextRow title,int wantedSlot,Size size) {
+            var anchors=menu.Rows.FindAll(r=>(title==null || r.Bounds.Bottom<=title.Bounds.Top+2)
+                && (MovePp(r.Text)>=0 || title!=null && Regex.IsMatch(r.Text.Trim(),@"^\d{2,5}$")))
+                .OrderBy(r=>r.Bounds.Top).ThenBy(r=>r.Bounds.Left).ToList();
+            if(anchors.Count!=4 || wantedSlot<1 || wantedSlot>anchors.Count)return null;
+            var upper=anchors.Where(r=>r.Bounds.Top-anchors[0].Bounds.Top<=Math.Max(18,size.Height*.035))
+                .OrderBy(r=>r.Bounds.Left).ToList();
+            var lower=anchors.Except(upper).OrderBy(r=>r.Bounds.Left).ToList();
+            bool grid=upper.Count==2 && lower.Count==2 &&
+                Math.Abs(lower[0].Bounds.Top-lower[1].Bounds.Top)<=Math.Max(18,size.Height*.035) &&
+                upper[1].Bounds.Left-upper[0].Bounds.Left>size.Width*.05;
+            if(grid)anchors=upper.Concat(lower).ToList();
+            var counters=new CatchTextRegion {Rows=anchors};
+            var closest=Near(counters,name,t=>true);
+            if(closest!=anchors[wantedSlot-1])return null;
+            return closest;
+        }
+        public static Rectangle? MoveCounterArea(CatchTextRegion menu,string move,int slot,Size size) {
+            if(String.IsNullOrEmpty(move))return null;
+            var title=Unique(menu,"Choose Attack") ?? Unique(menu,"Choose Move");
+            var name=Unique(menu,move);
+            if(title==null || name==null)return null;
+            var counter=MoveCounter(menu,name,title,slot,size);
+            if(counter==null || MovePp(counter.Text)>=0)return null;
+            var area=Rectangle.Inflate(Rectangle.Ceiling(counter.Bounds),6,4);
+            area.Intersect(new Rectangle(Point.Empty,size));
+            return area.IsEmpty ? (Rectangle?)null : area;
+        }
+        public static CatchControl MoveWithVerifiedPp(CatchTextRegion menu,string move,int slot,Rectangle area,int pp) {
+            if(pp<0)return null;
+            return Control(Unique(menu,move),move,slot,pp,new CatchTextRow {Bounds=area});
+        }
+        public static Rectangle? CompactItemList(CatchTextRegion menu,ChromeReading chrome,Size size) {
+            if(size.Width>800 || !chrome.BattleBox.HasValue)return null;
+            var box=chrome.BattleBox.Value;
+            var title=Unique(menu,"Choose Item");
+            if(box.Width<size.Width*.92 || title==null || title.Bounds.Left<box.Left+box.Width*.73)return null;
+            return Rectangle.Intersect(new Rectangle(Point.Empty,size),Rectangle.FromLTRB(
+                box.Left+(int)(box.Width*.79),box.Top+(int)(box.Width*.055),box.Right-5,(int)title.Bounds.Top));
+        }
+        public static CatchControl CompactListedBall(CatchTextRegion list,string ball) {
+            var label=Unique(list,ball);
+            if(label==null)return null;
+            var quantity=Stock(list,label);
+            var control=Control(label,ball,0,quantity==null ? -1 : Quantity(quantity.Text,false,true),quantity);
+            control.ListedBattleItem=true;
+            return control;
+        }
+        public static Rectangle? CompactMoveCard(CatchTextRegion menu,ChromeReading chrome,int slot,Size size) {
+            if(size.Width>800 || !chrome.BattleBox.HasValue || slot<1 || slot>4)return null;
+            var box=chrome.BattleBox.Value;
+            if(box.Width<size.Width*.92)return null;
+            var title=Unique(menu,"Choose Attack") ?? Unique(menu,"Choose Move");
+            if(title==null || title.Bounds.Left<box.Left+box.Width*.73 ||
+                Math.Abs(title.Bounds.Top-(box.Top+box.Width*.36))>box.Width*.04)return null;
+            int top=box.Top+(int)Math.Round(box.Width*(.064+.072*(slot-1)));
+            return Rectangle.Intersect(new Rectangle(Point.Empty,size),
+                Rectangle.FromLTRB(box.Left+(int)(box.Width*.75),top,box.Right-5,top+(int)(box.Width*.069)));
+        }
+        public static int CompactMovePp(CatchTextRegion menu,Rectangle ppArea,bool allowMerged=false) {
+            var rows=menu.Rows.Where(row=>ppArea.Contains(Center(row.Bounds))).ToList();
+            var values=rows.Select(row=>ReadExplicitPp(row.Text)).Where(pp=>pp>=0).Distinct().ToList();
+            if(values.Count>0)return values.Count==1 ? values[0] : -1;
+            values=rows.Select(row=>MovePp(row.Text)).Where(pp=>pp>=0).Distinct().ToList();
+            if(values.Count>0 || !allowMerged)return values.Count==1 ? values[0] : -1;
+            // In this font the last digit and slash can merge into a W. A
+            // separate nonzero leading digit still proves PP is available.
+            var positive=rows.Select(row=>Regex.Match(row.Text.Trim(),@"^([1-9])\s*[Ww]\s*[1-9][0-9]$"))
+                .Where(match=>match.Success).Select(match=>Int32.Parse(match.Groups[1].Value)).Distinct().ToList();
+            return positive.Count==1 ? positive[0] : -1;
+        }
+        public static CatchControl CompactMoveControl(CatchTextRegion nameCrop,string move,int slot,Rectangle ppArea,int pp) {
+            if(pp<0)return null;
+            return Control(Unique(nameCrop,move),move,slot,pp,new CatchTextRow {Bounds=ppArea});
+        }
+        public static int ReadExplicitPp(string text) {
+            var value=(text ?? "").Trim();
+            return Regex.IsMatch(value,@"^\d{1,2}\s*[/\\'\u2019.,:]\s*\d{1,2}$") ? MovePp(value) : -1;
         }
         static CatchTextRow Stock(CatchTextRegion region,CatchTextRow label) {
             var rows=region.Rows.FindAll(r=>Quantity(r.Text,false,true)>=0 && Math.Abs(r.Bounds.Left-label.Bounds.Left)<=Math.Max(14,label.Bounds.Height) && r.Bounds.Top>=label.Bounds.Top-3 && r.Bounds.Top-label.Bounds.Bottom<=Math.Max(24,label.Bounds.Height*2.5));
@@ -90,6 +191,7 @@ namespace MovementPrototype {
                 r.Bounds.Top<first.Bounds.Bottom && first.Bounds.Top<r.Bounds.Bottom) ? first : null;
         }
         static readonly List<string> Species=LoadSpecies();
+        static readonly HashSet<string> NormalizedSpecies=new HashSet<string>(Species.Select(Fold));
         static List<string> LoadSpecies() {
             string path=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"pokemon-names.txt");
             return File.Exists(path) ? File.ReadAllLines(path).Where(x=>x.Trim().Length>0).OrderByDescending(x=>x.Length).ToList() : new List<string>();
@@ -103,25 +205,26 @@ namespace MovementPrototype {
         static bool OwnName(string text,string wanted) {
             if(Has(text,wanted))return true;string desired=Fold(wanted);if(desired.Length<5)return false;
             foreach(Match word in Regex.Matches(text ?? "",@"[A-Za-z]+")) {
-                string token=Fold(word.Value);if(Species.Any(n=>Fold(n)==token))continue;
-                var matches=Species.Where(n=>OneEdit(Fold(n),token) ||
-                    Fold(n).Replace("rn","m")==token.Replace("rn","m")).Select(Fold).Distinct().ToList();
+                string token=Fold(word.Value);if(NormalizedSpecies.Contains(token))continue;
+                string joined=token.Replace("rn","m");
+                var matches=NormalizedSpecies.Where(n=>OneEdit(n,token) || n.Replace("rn","m")==joined).Take(2).ToList();
                 if(matches.Count==1 && matches[0]==desired)return true;
             }return false;
         }
         public static Rectangle OwnCaption(CatchTextRegion own,string wanted,Size size) {
             Rectangle result=Rectangle.Empty;
             foreach(var row in own.Rows) {
-                foreach(var word in row.Words)if(OwnName(word.Text,wanted)) {
+                foreach(var word in row.Words)if(OwnName(word.Text,wanted) ||
+                    size.Width<=800 && Fold(wanted)=="smeargle" && Fold(word.Text)=="smnrlc") {
                     var box=Rectangle.Inflate(Rectangle.Ceiling(word.Bounds),2,2);result=result.IsEmpty ? box : Rectangle.Union(result,box);
                 }
             }
-            // Windows OCR sometimes splits the observed Smeargle caption into
-            // "S rr-leargle". Require both adjacent words in the active caption.
+            // The compact client can split Smeargle into two neighboring OCR words.
             if(result.IsEmpty && Fold(wanted)=="smeargle")foreach(var row in own.Rows) {
                 for(int i=0;i+1<row.Words.Count;i++) {
                     var first=row.Words[i];var second=row.Words[i+1];
-                    if(Fold(first.Text+second.Text)=="srrleargle" && second.Bounds.Left-first.Bounds.Right<=first.Bounds.Height)
+                    string text=Fold(first.Text+second.Text);
+                    if((text=="srrleargle" || text=="smearjlc") && second.Bounds.Left-first.Bounds.Right<=first.Bounds.Height)
                         result=Rectangle.Inflate(Rectangle.Ceiling(RectangleF.Union(first.Bounds,second.Bounds)),2,2);
                 }
             }
@@ -222,24 +325,11 @@ namespace MovementPrototype {
             var explicitPp=menu.Rows.FindAll(r=>Regex.IsMatch(r.Text,@"\d\s*/\s*\d") && Quantity(r.Text,true)>=0);
             var wantedLabel=String.IsNullOrEmpty(wantedMove) ? null : Unique(menu,wantedMove);
             if(attackMenu || explicitPp.Count>=2 && (wantedLabel!=null || explicitPp.Count==4)) {
-                var ppRows=menu.Rows.FindAll(r=>(attackTitle==null || r.Bounds.Bottom<=attackTitle.Bounds.Top+2)
-                    && (Quantity(r.Text,true)>=0 || attackMenu && Regex.IsMatch(r.Text.Trim(),@"^\d{2,5}$")));
                 frame.View=CatchView.Moves;
-                var name=wantedLabel;
-                if(name!=null) {
-                    var pp=Near(new CatchTextRegion {Rows=ppRows},name,t=>Quantity(t,true)>=0);
-                    if(pp!=null) {
-                        // PP anchors establish each slot independently of text length.
-                        var anchors=ppRows.OrderBy(r=>r.Bounds.Top).ThenBy(r=>r.Bounds.Left).ToList();
-                        if(anchors.Count==4) {
-                            var upper=anchors.Where(r=>r.Bounds.Top-anchors[0].Bounds.Top<=Math.Max(18,image.Height*.035)).OrderBy(r=>r.Bounds.Left).ToList();
-                            var lower=anchors.Except(upper).OrderBy(r=>r.Bounds.Left).ToList();
-                            bool grid=upper.Count==2 && lower.Count==2 && Math.Abs(lower[0].Bounds.Top-lower[1].Bounds.Top)<=Math.Max(18,image.Height*.035) && upper[1].Bounds.Left-upper[0].Bounds.Left>image.Width*.05;
-                            if(grid)anchors=upper.Concat(lower).ToList();
-                        }
-                        int slot=anchors.IndexOf(pp)+1;
-                        if(anchors.Count==4 && slot==wantedSlot)Put(frame,CatchActionKind.ChooseMove,Control(name,wantedMove,slot,Quantity(pp.Text,true),pp));
-                    }
+                if(wantedLabel!=null) {
+                    var counter=MoveCounter(menu,wantedLabel,attackTitle,wantedSlot,image.Size);
+                    if(counter!=null && MovePp(counter.Text)>=0)
+                        Put(frame,CatchActionKind.ChooseMove,Control(wantedLabel,wantedMove,wantedSlot,MovePp(counter.Text),counter));
                 }
                 return frame;
             }
@@ -254,6 +344,12 @@ namespace MovementPrototype {
             }
             }
             var fight=Unique(menu,"Fight");var pokemon=Unique(menu,"Pokemon") ?? Unique(menu,"Pokémon") ?? Unique(menu,"P kemon") ?? Unique(menu,"okemon");var items=Unique(menu,"Items");var run=Unique(menu,"Run");
+            if(image.Width<=800 && chrome.BattleBox.HasValue && chrome.BattleBox.Value.Width>=image.Width*.92) {
+                // The compact pixel font can drop or split these letters.
+                // All four labels still have to form a ready battle command grid.
+                items=items ?? Unique(menu,"Ite s") ?? Unique(menu,"tems") ?? Unique(menu,"Ite");
+                run=run ?? Unique(menu,"R bn");
+            }
             if(frame.Wild && fight!=null && pokemon!=null && items!=null && run!=null) {
                 var f=Center(fight.Bounds);var p=Center(pokemon.Bounds);var i=Center(items.Bounds);var r=Center(run.Bounds);
                 if(p.X<=f.X+image.Width*.025 || i.Y<=f.Y+image.Height*.025 || Math.Abs(f.X-i.X)>image.Width*.035 || Math.Abs(p.X-r.X)>image.Width*.035 || Math.Abs(f.Y-p.Y)>image.Height*.025 || Math.Abs(i.Y-r.Y)>image.Height*.025)return frame;

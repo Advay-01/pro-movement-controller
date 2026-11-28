@@ -44,7 +44,7 @@ namespace MovementPrototype {
         public long Id;
         public double CapturedAt;
         public CatchView View;
-        public bool Wild,Ready,Success,Failure,WorldStable;
+        public bool Wild,Ready,Success,Failure,WorldStable,RareEncounter;
         public string Opponent,ActivePokemon,LeadPokemon,Message="",MessageKey="",FailureReason;
         public Dictionary<CatchActionKind,CatchControl> Controls=new Dictionary<CatchActionKind,CatchControl>();
         public Rectangle HeaderSeal,OwnSeal,ResultArea;
@@ -63,9 +63,9 @@ namespace MovementPrototype {
         CatchConfig config;
         string species,oldMessage="";
         int step,repeat,menuRequests,knownBallStock=-1;
-        int unsentMenuRetries;
+        int unsentActionRetries;
         double began,pendingAt,unclearAt=-1,progressAt,resultWorldAt=-1;
-        bool sawBusy,successSeen;
+        bool sawBusy,successSeen,actionMessageSeen;
         long lastFrame=-1;
         CatchActionKind? pendingMenu;
         public CatchPhase Phase {get;private set;}
@@ -76,20 +76,33 @@ namespace MovementPrototype {
         public bool Resume {get{return config!=null && config.Resume;}}
         public bool Active {get{return Phase!=CatchPhase.Idle && Phase!=CatchPhase.Complete && Phase!=CatchPhase.Stopped;}}
         public bool WaitingAnimation {get{return Phase==CatchPhase.WaitMove || Phase==CatchPhase.WaitBall;}}
-        public void Reset() {Epoch++;Phase=CatchPhase.Idle;Status="Auto-catch idle";config=null;species=null;step=repeat=BallsUsed=menuRequests=unsentMenuRetries=0;knownBallStock=-1;successSeen=sawBusy=false;lastFrame=-1;pendingMenu=null;unclearAt=resultWorldAt=-1;}
-        public void Start(CatchConfig settings,string target,int confirmations,double now) {
-            settings.Validate();if(confirmations<2 || String.IsNullOrEmpty(target))throw new InvalidOperationException("Two fresh exact target readings are required.");
+        public void Reset() {Epoch++;Phase=CatchPhase.Idle;Status="Auto-catch idle";config=null;species=null;step=repeat=BallsUsed=menuRequests=unsentActionRetries=0;knownBallStock=-1;successSeen=sawBusy=actionMessageSeen=false;lastFrame=-1;pendingMenu=null;unclearAt=resultWorldAt=-1;}
+        public void Start(CatchConfig settings,string target,int confirmations,double now,bool rareEncounter=false) {
+            settings.Validate();
+            if(confirmations<(rareEncounter ? 1 : 2) || String.IsNullOrEmpty(target))
+                throw new InvalidOperationException("Fresh exact target recognition is required.");
             Reset();config=settings.Copy();species=target;began=progressAt=now;Phase=CatchPhase.SelectCatcher;Status="Target confirmed — selecting catcher";
+        }
+        public void WaitForNotice(double now) {
+            progressAt=now;
+            if(pendingMenu.HasValue)pendingAt=now;
         }
         public void Suspend() {Epoch++;lastFrame=-1;unclearAt=-1;knownBallStock=-1;}
         public void Cancel(string reason) {Epoch++;Phase=CatchPhase.Stopped;Status=reason;pendingMenu=null;}
-        public bool RetryUnsentNavigation(CatchAction action) {
-            if(action==null || action.Epoch!=Epoch || pendingMenu!=action.Kind || ++unsentMenuRetries>4)return false;
+        public bool RetryUnsentAction(CatchAction action) {
+            if(action==null || action.Epoch!=Epoch || ++unsentActionRetries>4)return false;
+            if(action.Kind==CatchActionKind.ChooseMove && Phase==CatchPhase.WaitMove) {
+                Phase=CatchPhase.PrepareMove;
+            } else if(action.Kind==CatchActionKind.UseBall && Phase==CatchPhase.WaitBall) {
+                Phase=CatchPhase.SelectBall;
+                BallsUsed--;
+                if(knownBallStock>=0)knownBallStock++;
+            } else if(pendingMenu!=action.Kind)return false;
             pendingMenu=null;
             Status="Waiting for the catching menu to settle";
             return true;
         }
-        public void NavigationSent() {unsentMenuRetries=0;}
+        public void ActionSent() {unsentActionRetries=0;}
         CatchAction Request(CatchActionKind kind,CatchControl control,CatchFrame frame,double now) {
             if(control==null)return null;
             if(++menuRequests>100) {Cancel("Stopped — catching navigation limit reached");return null;}
@@ -131,10 +144,12 @@ namespace MovementPrototype {
             unclearAt=-1;
             if(Phase==CatchPhase.WaitMove || Phase==CatchPhase.WaitBall) {
                 double actionWait=Phase==CatchPhase.WaitBall ? 30 : 18;
+                if(Phase==CatchPhase.WaitMove && OwnActionMessage(frame,config.Moves[step].Name))actionMessageSeen=true;
+                if(Phase==CatchPhase.WaitBall && frame.MessageKey!=oldMessage &&
+                    Regex.IsMatch(frame.Message ?? "",@"\b(broke free|broke out|escaped from the ball|almost had it|appeared to be caught)\b",RegexOptions.IgnoreCase))
+                    actionMessageSeen=true;
                 if(frame.View==CatchView.Busy) {sawBusy=true;if(now-pendingAt>actionWait)Cancel("Stopped — catching action stayed busy too long");return null;}
-                bool moveAck=Phase==CatchPhase.WaitMove && OwnActionMessage(frame,config.Moves[step].Name);
-                bool ballAck=Phase==CatchPhase.WaitBall && frame.MessageKey!=oldMessage && Regex.IsMatch(frame.Message ?? "",@"\b(broke free|broke out|escaped from the ball|almost had it|appeared to be caught)\b",RegexOptions.IgnoreCase);
-                if(frame.View==CatchView.Commands && frame.Ready && (sawBusy || moveAck || ballAck)) {
+                if(frame.View==CatchView.Commands && frame.Ready && (sawBusy || actionMessageSeen)) {
                     if(Phase==CatchPhase.WaitMove) {repeat++;if(repeat>=config.Moves[step].Uses) {step++;repeat=0;}Phase=step<config.Moves.Count ? CatchPhase.PrepareMove : CatchPhase.SelectBall;}
                     else Phase=CatchPhase.SelectBall;
                     pendingMenu=null;sawBusy=false;progressAt=now;Status="Battle ready — continuing catching sequence";
@@ -156,13 +171,16 @@ namespace MovementPrototype {
                 } else return null;
             }
             if(Phase==CatchPhase.PrepareMove) {
+                // Animation or a shaded menu can temporarily hide the active nameplate.
+                // Wait for it to return before opening Fight or selecting a move.
+                if(String.IsNullOrEmpty(frame.ActivePokemon))return null;
                 if(!SameName(frame.ActivePokemon,config.Catcher)) {Cancel("Stopped — active catcher changed");return null;}
                 if((frame.View==CatchView.Commands || frame.View==CatchView.Party || frame.View==CatchView.BallList || frame.View==CatchView.Bag) && frame.Ready)return Request(CatchActionKind.OpenFight,frame.Control(CatchActionKind.OpenFight),frame,now);
                 if(frame.View==CatchView.Moves) {
                     var move=frame.Control(CatchActionKind.ChooseMove);var wanted=config.Moves[step];
                     if(move==null || !SameName(move.Name,wanted.Name) || move.Slot!=wanted.Slot)return null;
                     if(move.Remaining<=0) {Cancel("Stopped — move PP is unavailable or exhausted");return null;}
-                    pendingAt=progressAt=now;oldMessage=frame.MessageKey;sawBusy=false;Phase=CatchPhase.WaitMove;pendingMenu=null;
+                    pendingAt=progressAt=now;oldMessage=frame.MessageKey;sawBusy=actionMessageSeen=false;Phase=CatchPhase.WaitMove;pendingMenu=null;
                     return new CatchAction {Kind=CatchActionKind.ChooseMove,Point=move.Point,FrameId=frame.Id,Epoch=Epoch,Label=move.Name};
                 }
             }
@@ -177,7 +195,7 @@ namespace MovementPrototype {
                     if(ball.Remaining>0)knownBallStock=knownBallStock<0 ? ball.Remaining : Math.Min(knownBallStock,ball.Remaining);
                     if(knownBallStock==0 || knownBallStock<0 && !ball.ListedBattleItem)return null;
                     if(knownBallStock>0)knownBallStock--;
-                    BallsUsed++;pendingAt=progressAt=now;oldMessage=frame.MessageKey;sawBusy=false;Phase=CatchPhase.WaitBall;pendingMenu=null;
+                    BallsUsed++;pendingAt=progressAt=now;oldMessage=frame.MessageKey;sawBusy=actionMessageSeen=false;Phase=CatchPhase.WaitBall;pendingMenu=null;
                     return new CatchAction {Kind=CatchActionKind.UseBall,Point=ball.Point,FrameId=frame.Id,Epoch=Epoch,Label=ball.Name};
                 }
             }

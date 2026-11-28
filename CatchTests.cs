@@ -43,6 +43,43 @@ namespace MovementPrototype {
             var result=new List<string>();bool rejected=false;
             Check(CatchVision.MovePp("61/64")==61 && CatchVision.MovePp("61164")==61 && CatchVision.MovePp("2424")==24 && CatchVision.MovePp("30'30")==30,"pixel-font PP separators");
             Check(CatchVision.MovePp("111")==-1 && CatchVision.MovePp("3000")==-1 && CatchVision.MovePp("20/10")==-1 && CatchVision.MovePp("0/64")==0,"ambiguous or impossible PP cannot authorize input");
+            foreach(var badRead in new string[] {"702","1002"}) {
+                var moves=Text("False Swipe","12140","Soak",badRead,"Spore","13115","Mean Look","515","Choose Attack","18");
+                var size=new Size(1000,800);
+                var retry=CatchVision.MoveCounterArea(moves,"Soak",2,size);
+                Check(CatchVision.MovePp(badRead)<0 && retry.HasValue && retry.Value.Contains(800,340) &&
+                    !retry.Value.Contains(800,250),"retry crops only the requested slot counter");
+                Check(!CatchVision.MoveCounterArea(moves,"Soak",1,size).HasValue,"wrong slot must not get a targeted PP retry");
+                var control=CatchVision.MoveWithVerifiedPp(moves,"Soak",2,retry.Value,7);
+                Check(control!=null && control.Bounds.Contains(retry.Value) && control.Remaining==7,"the verified number is included in the click seal");
+            }
+            result.Add("PASS: malformed Soak counters 702 and 1002 get a slot-specific retry whose pixels are sealed before input");
+            var compactSize=new Size(640,480);
+            var compactChrome=new ChromeReading {Kind=ChromeKind.Battle,BattleBox=new Rectangle(0,19,638,370)};
+            var compactTitle=new CatchTextRegion();
+            compactTitle.Rows.Add(new CatchTextRow {Text="Choose Attack",Bounds=new RectangleF(500,249,106,18)});
+            var soakCard=CatchVision.CompactMoveCard(compactTitle,compactChrome,2,compactSize);
+            Check(soakCard.HasValue && soakCard.Value.Contains(491,125) && !soakCard.Value.Contains(491,80),
+                "compact fallback must crop only the configured second move");
+            Check(!CatchVision.CompactMoveCard(new CatchTextRegion(),compactChrome,2,compactSize).HasValue &&
+                CatchVision.CompactMoveControl(Text("Spore"),"Soak",2,soakCard.Value,22)==null,
+                "compact fallback requires the attack title and the exact move name");
+            var compactPp=new CatchTextRegion();
+            compactPp.Rows.Add(new CatchTextRow {Text="30/40",Bounds=new RectangleF(600,86,27,10)});
+            compactPp.Rows.Add(new CatchTextRow {Text="22/32",Bounds=new RectangleF(600,130,27,10)});
+            Check(CatchVision.CompactMovePp(compactPp,new Rectangle(570,120,64,28))==22,
+                "a wide OCR read must verify PP only inside the selected card");
+            compactPp.Rows[1].Text="2740";
+            Check(CatchVision.CompactMovePp(compactPp,new Rectangle(570,120,64,28))==27,
+                "the configured card also accepts an unambiguous counter with an omitted slash");
+            compactPp.Rows[1].Text="2W40";
+            Check(CatchVision.CompactMovePp(compactPp,new Rectangle(570,120,64,28),true)>0,
+                "a compact merged digit and slash still has an independently visible nonzero leading digit");
+            compactPp.Rows[1].Text="0W40";
+            Check(CatchVision.CompactMovePp(compactPp,new Rectangle(570,120,64,28),true)<0,
+                "a merged zero counter must not authorize a move");
+            result.Add("PASS: small-window move OCR isolates the configured card and requires the exact learned move");
+
             result.Add("PASS: compact pixel-font PP accepts only a unique current/total pair; ambiguous, exhausted and impossible counters remain blocked");
             using(var image=new Bitmap(1000,800)) {
                 var own=Text("Breoom");var cfg=Config();cfg.Catcher="Breloom";
@@ -89,7 +126,7 @@ namespace MovementPrototype {
             s=new Scenario();s.Prepare();s.Throw();var previewFrame=s.Frame(CatchView.Success);
             previewFrame=CatchVision.Preview(Text("Mimikyu Lv2 PREVIEW X"),"mimikyu",previewFrame.Id,s.Now);
             var closePreview=s.Observe(previewFrame);Check(previewFrame.Success && closePreview!=null && closePreview.Kind==CatchActionKind.CloseSummary,"new exact capture preview closes after an owned ball throw");
-            Check(s.Flow.RetryUnsentNavigation(closePreview),"fresh capture preview can retry a close that was never sent");
+            Check(s.Flow.RetryUnsentAction(closePreview),"fresh capture preview can retry a close that was never sent");
             var nextPreview=s.Frame(CatchView.Success);
             nextPreview=CatchVision.Preview(Text("Mimikyu Lv2 PREVIEW X"),"mimikyu",nextPreview.Id,s.Now);
             Check(s.Observe(nextPreview)!=null,"rejected preview pixels require a fresh close request");
@@ -104,6 +141,14 @@ namespace MovementPrototype {
             result.Add("PASS: capture preview requires the exact species and an owned throw; its close and stable world complete the flow; wrong/absent results and a changed lead remain blocked");
             s=new Scenario();s.Prepare();s.Throw();s.Step(CatchView.Commands,CatchActionKind.OpenBag);s.Throw();s.Step(CatchView.Commands);Check(s.Flow.Phase==CatchPhase.Stopped && s.Flow.BallsUsed==2,"failed balls cannot exceed budget");
             s=new Scenario();s.Prepare();var empty=s.Frame(CatchView.BallList);empty.Control(CatchActionKind.UseBall).Remaining=0;Check(s.Observe(empty)==null && !s.Flow.Active,"empty stock stops before a throw");
+            s=new Scenario();s.Prepare();s.Step(CatchView.BallList,CatchActionKind.UseBall);
+            var breakout=s.Frame(CatchView.Unknown);
+            breakout.Message=breakout.MessageKey="Oh no! The Pokemon broke free!";
+            Check(s.Observe(breakout)==null,"do not throw while the breakout dialogue is visible");
+            s.Step(CatchView.Unknown);
+            s.Step(CatchView.Commands,CatchActionKind.OpenBag);
+            s.Step(CatchView.BallList,CatchActionKind.UseBall);
+            s.Step(CatchView.Commands);
             s=new Scenario();s.Step(CatchView.Commands,CatchActionKind.OpenFight);var noPp=s.Frame(CatchView.Moves);noPp.Control(CatchActionKind.ChooseMove).Remaining=0;Check(s.Observe(noPp)==null && !s.Flow.Active,"zero PP stops before move input");
             result.Add("PASS: escape from balls retries only within the configured cap; zero PP and empty stock stop before input");
             s=new Scenario();var f=s.Frame();var action=s.Observe(f);Check(s.Flow.Allows(action,f,s.Now,true),"fresh selected action");Check(!s.Flow.Allows(action,f,s.Now,false) && !s.Flow.Allows(action,f,s.Now+CatchFlow.MaximumFrameAge+1,true),"lease and age checks");
@@ -111,11 +156,22 @@ namespace MovementPrototype {
             s=new Scenario();f=s.Frame();f.CapturedAt=-10;Check(s.Observe(f)==null,"stale frame cannot change phase");f=s.Frame();f.Opponent="ralts";Check(s.Observe(f)==null,"different species never receives a catching action");
             s=new Scenario();f=s.Frame(CatchView.World);f.Wild=false;Check(s.Observe(f)==null && !s.Flow.Active,"battle disappearance cannot imply capture");
             result.Add("PASS: wrong species, stale frames, revoked foreground lease, handoff epochs, emergency cancellation and unconfirmed battle exit authorize no catching input");
-            config=Config();config.Moves=new List<CatchMove> {new CatchMove {Name="Soak",Slot=2},new CatchMove {Name="False Swipe",Slot=3,Uses=2}};s=new Scenario(config);
+            config=Config();config.Moves=new List<CatchMove> {new CatchMove {Name="Soak",Slot=2},new CatchMove {Name="False Swipe",Slot=1,Uses=2}};s=new Scenario(config);
             foreach(string move in new string[] {"Soak","False Swipe","False Swipe"}) {
                 s.Step(CatchView.Commands,CatchActionKind.OpenFight);Check(s.Flow.WantedMove==move,"ordered configured recipe");s.Step(CatchView.Moves,CatchActionKind.ChooseMove);s.Step(CatchView.Busy);
             }
             s.Step(CatchView.Commands,CatchActionKind.OpenBag);Check(s.Flow.Phase==CatchPhase.SelectBall,"all configured preparation turns acknowledged");
+            s.Step(CatchView.BallList,CatchActionKind.UseBall);
+            var mimikyuBreak=s.Frame(CatchView.Unknown);
+            mimikyuBreak.Message=mimikyuBreak.MessageKey="Oh no! The Pokemon broke free!";
+            Check(s.Observe(mimikyuBreak)==null,"do not send a second ball during the breakout dialogue");
+            s.Step(CatchView.Unknown);
+            s.Step(CatchView.Commands,CatchActionKind.OpenBag);
+            s.Throw();
+            var mimikyuCaught=s.Frame(CatchView.Success);mimikyuCaught.Success=true;s.Observe(mimikyuCaught);
+            var backOutside=s.Frame(CatchView.World);backOutside.Wild=false;backOutside.WorldStable=true;s.Observe(backOutside);
+            Check(s.Flow.Phase==CatchPhase.Complete && s.Flow.Resume && s.Flow.BallsUsed==2,
+                "Mimikyu recipe must handle a breakout, confirm the retry and resume");
             s=new Scenario();f=s.Frame();f.ActivePokemon="Ralts";Check(s.Observe(f).Kind==CatchActionKind.OpenParty,"switch to configured catcher first");f=s.Frame(CatchView.Party);f.ActivePokemon="Ralts";f.Control(CatchActionKind.ChooseCatcher).Slot=1;Check(s.Observe(f)==null,"same name in wrong party slot is rejected");f=s.Frame(CatchView.Party);f.ActivePokemon="Ralts";Check(s.Observe(f).Kind==CatchActionKind.ChooseCatcher,"matching party name and slot");
             result.Add("PASS: ordered preparation and repeated False Swipe turns are acknowledged individually; catcher selection requires matching name and party slot");
             s=new Scenario();s.Step(CatchView.Commands,CatchActionKind.OpenFight);f=s.Frame();s.Now+=5;f.CapturedAt=s.Now;s.Observe(f);Check(!s.Flow.Active,"ignored menu navigation is time bounded");
@@ -124,6 +180,28 @@ namespace MovementPrototype {
             result.Add("PASS: ignored menus and unacknowledged attacks reach bounded stops; optional expected leading Pokémon is verified before resume");
             s=new Scenario();s.Prepare();s.Throw();f=s.Frame(CatchView.Busy);s.Now+=20;f.CapturedAt=s.Now;s.Observe(f);Check(s.Flow.Active,"ball animation may exceed the shorter move timeout");
             f=s.Frame(CatchView.Busy);s.Now+=11;f.CapturedAt=s.Now;s.Observe(f);Check(!s.Flow.Active,"ball animation still has a bounded 30-second deadline");
+            s=new Scenario();
+            s.Step(CatchView.Commands,CatchActionKind.OpenFight);
+            var unreadable=s.Frame(CatchView.Moves);unreadable.ActivePokemon=null;
+            Check(s.Observe(unreadable)==null && s.Flow.Active,"one missing catcher nameplate must wait without selecting a move");
+            s.Step(CatchView.Moves,CatchActionKind.ChooseMove);
+            var moveAck=s.Frame(CatchView.Unknown);moveAck.Message=moveAck.MessageKey="Smeargle used False Swipe!";
+            Check(s.Observe(moveAck)==null,"move acknowledgement during animation cannot send input");
+            s.Step(CatchView.Unknown);
+            s.Step(CatchView.Commands,CatchActionKind.OpenBag);
+            result.Add("PASS: transient missing catcher waits for a fresh caption; move acknowledgement survives a blank frame and advances when commands return");
+            s=new Scenario();
+            s.Step(CatchView.Commands,CatchActionKind.OpenFight);
+            var unsentMove=s.Step(CatchView.Moves,CatchActionKind.ChooseMove);
+            Check(s.Flow.RetryUnsentAction(unsentMove),"unsubmitted move may be verified again");
+            s.Step(CatchView.Moves,CatchActionKind.ChooseMove);
+            s.Flow.ActionSent();
+            s.Step(CatchView.Busy);s.Step(CatchView.Commands,CatchActionKind.OpenBag);
+            var unsentBall=s.Step(CatchView.BallList,CatchActionKind.UseBall);
+            Check(s.Flow.RetryUnsentAction(unsentBall) && s.Flow.BallsUsed==0,"unsubmitted ball must not consume the budget");
+            s.Step(CatchView.BallList,CatchActionKind.UseBall);
+            Check(s.Flow.BallsUsed==1,"only the confirmed retry reserves a ball");
+            result.Add("PASS: changing button pixels triggers a bounded fresh read before a move or throw; unsent balls do not consume the budget");
             var parsed=Parse(Text("Soak","PP 20/20","Spore","PP 15/15","False Swipe","PP 30/40","Mean Look","PP 5/5"));
             Check(parsed.View==CatchView.Moves && parsed.Control(CatchActionKind.ChooseMove)!=null && parsed.Control(CatchActionKind.ChooseMove).Slot==3 && parsed.Control(CatchActionKind.ChooseMove).Remaining==30,"move OCR requires configured name, slot and PP");
             parsed=Parse(Text("unrelated text"),null,Text("Balls","Pokéball","x516"));Check(parsed.View==CatchView.BallList && parsed.Control(CatchActionKind.UseBall).Remaining==516,"observed accented ball label and stock");
@@ -176,6 +254,19 @@ namespace MovementPrototype {
             return result;
         }
         public static string Ocr() {
+            using(var image=new Bitmap(160,85))using(var g=Graphics.FromImage(image))
+            using(var font=new Font("Segoe UI",9,FontStyle.Bold)) {
+                var area=new Rectangle(83,19,58,25);
+                foreach(var sample in new[] {new {Text="7/32",Pp=7},new {Text="10/32",Pp=10},new {Text="0/32",Pp=0}}) {
+                    g.Clear(Color.FromArgb(24,24,28));
+                    g.DrawString(sample.Text,font,Brushes.White,90,24);
+                    g.DrawString("20/32",font,Brushes.White,90,51);
+                    g.Flush();
+                    Check(LocalOcr.ReadMoveCounter(image,area).GetAwaiter().GetResult()==sample.Pp,
+                        "isolated OCR must recover "+sample.Text+" without reading the next move");
+                }
+            }
+
             using(var image=new Bitmap(1000,800))using(var g=Graphics.FromImage(image))using(var font=new Font("Segoe UI",14,FontStyle.Bold)) {
                 g.Clear(Color.FromArgb(20,28,20));g.FillRectangle(Brushes.DimGray,130,90,680,20);g.FillRectangle(Brushes.Black,630,110,180,260);
                 g.DrawString("Advay",font,Brushes.White,220,105);g.DrawString("VS.",font,Brushes.Gold,320,105);g.DrawString("Wild Zigzagoon",font,Brushes.White,370,105);g.Flush();
@@ -247,7 +338,7 @@ namespace MovementPrototype {
                 g.FillRectangle(Brushes.Black,0,78,148,30);g.Flush();frame=LocalOcr.ReadCatch(image,chrome,Config(),"seedot","False Swipe",1,15,0).GetAwaiter().GetResult();Check(frame.View==CatchView.Party && frame.Control(CatchActionKind.ChooseCatcher)==null,"missing HUD member cannot shift the configured slot");
                 g.DrawString("Smeargle",font,Brushes.White,10,80);g.FillRectangle(Brushes.DarkBlue,630,140,180,60);g.Flush();frame=LocalOcr.ReadCatch(image,chrome,Config(),"seedot","False Swipe",1,17,0).GetAwaiter().GetResult();Check(frame.View==CatchView.Party && frame.Control(CatchActionKind.ChooseCatcher)==null,"a colored overlay covering the icon row cannot pass as party icons");
             }
-            return "PASS: Windows OCR covers targets, catcher, move/PP, stock, capture log, inset Run/Items coordinates and trainer rejection. Open moves override persistent commands; icon-party selection requires matching HUD name, slot and visible icon count, and rejects a missing HUD member. No game input sent.";
+            return "PASS: OCR covers targets, catcher, move/PP, stock, capture log, inset Run/Items coordinates and trainer rejection. Open moves override persistent commands; icon-party selection requires matching HUD name, slot and visible icon count, and rejects a missing HUD member. No game input sent.";
         }
     }
 }
