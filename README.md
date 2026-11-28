@@ -1,4 +1,4 @@
-# Movement Controller v2.1.5 — testing prototype
+# Movement Controller v2.1.6 — testing prototype
 
 Fixes live catching in the compact PRO battle panel: open Fight/Items menus remain readable, the catcher caption is recognized separately from scenery, pixel-font PP counters and the in-battle Choose Item list are supported, and final input checks cover the actual target/catcher captions. Slow initial OCR is discarded and retried; stale screens never receive input.
 
